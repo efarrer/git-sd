@@ -15,8 +15,12 @@ func main() {
 	switch command {
 	case "track":
 		runTrack(os.Args[2:])
+	case "status":
+		runStatus(os.Args[2:])
 	case "assign":
 		runAssign(os.Args[2:])
+	case "sync":
+		runSync(os.Args[2:])
 	case "help", "--help", "-h":
 		showUsage()
 	case "--agent":
