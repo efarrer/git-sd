@@ -1,0 +1,76 @@
+package main
+
+import (
+	"fmt"
+	"os"
+)
+
+func main() {
+	if len(os.Args) < 2 {
+		showUsage()
+		os.Exit(0)
+	}
+
+	command := os.Args[1]
+	switch command {
+	case "track":
+		runTrack(os.Args[2:])
+	case "assign":
+		runAssign(os.Args[2:])
+	case "help", "--help", "-h":
+		showUsage()
+	case "--agent":
+		showAgentUsage()
+	default:
+		fmt.Printf("Unknown command: %s\n", command)
+		showUsage()
+		os.Exit(1)
+	}
+}
+
+func showUsage() {
+	fmt.Print(`usage: git sd <command> [<args>]
+
+Commands:
+  track       Add git-sd-id trailers to untracked commits
+  status      List commits and their Stack Set/PR status
+                Options: --legend, --no-legend
+  assign      Assign commits to a Stack Set
+  move        Reorder commits, promote/demote/reparent sub-commits
+  fixup       Attach HEAD as the next sub-commit of a PR (PR feedback)
+  sync        Synchronize GitHub PR state with local branch
+  merge       Safely merge approved PRs in a stack
+                Options: --all, --upto <index> (merge only the bottom prefix up
+                to that status index; a prefix, never a cherry-picked middle PR)
+  rebase      Drop landed PRs' commits and rebase onto the updated base
+              branch (local only; backed up, auto-rolls back on conflict)
+                Options: --rollback [<n>] (restore backup n, 1 = newest),
+                --list (show backups)
+
+Options:
+  --help      Show this help message
+  --agent     Print a detailed, complete command reference for agents
+
+Configuration (via git config):
+  sd.status.legend [true|false]      Always show the status emoji legend (Default: false)
+  sd.status.columns [string]         Comma-separated list of columns for 'git sd status'
+                                     (Default: Icon,Status,Index,Stack Set,git-sd-id,Hash,Message,PR)
+  sd.status.color [true|false]       Color the Status word (Default: true; terminal only,
+                                     off if NO_COLOR is set or TERM=dumb)
+  sd.base-branch [string]            Upstream branch to target instead of main/master, as
+                                     "<remote>/<branch>". The remote must be one of this
+                                     repo's configured git remotes (any remote works, not
+                                     just "origin"). If unset, defaults to the "origin"
+                                     remote's main branch if "origin" exists, else the
+                                     repo's sole remote's main branch if there's exactly
+                                     one; otherwise git-sd asks you to set this explicitly.
+                                     Useful for testing against a branch without main's
+                                     approval guards.
+
+Note: 'git sd merge' delegates approval/CI enforcement entirely to GitHub's
+native Stacks async-merge API and whatever branch protection is configured
+on the repo — git-sd does not check approvals or CI status itself.
+
+Note: Use 'git config' for project config or 'git config --global' for home config.
+`)
+}
