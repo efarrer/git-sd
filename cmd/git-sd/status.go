@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"git-sd/internal/git"
 	"git-sd/internal/github"
@@ -49,35 +50,104 @@ func runStatus(args []string) {
 	op := activeOperation() // a sync or merge running right now, if any
 	color := ui.ColorEnabled(git.ConfigGetWithDefault("sd.status.color", "true"), os.Getenv, stdoutIsTerminal())
 
-	baseBranch, _, since, err := git.ResolveBaseBranch()
+	view, err := buildStatusView(statusViewOptions{Columns: columns, Color: color, Op: op, RefreshIndex: true})
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+		var failure *statusFailure
+		if errors.As(err, &failure) {
+			fmt.Println(failure.line)
+		} else {
+			fmt.Printf("Error: %v\n", err)
+		}
 		os.Exit(1)
 	}
-
-	commits, err := git.GetCommitsInRange(since)
-	if err != nil {
-		fmt.Printf("Error getting commits: %v\n", err)
-		os.Exit(1)
-	}
-
-	if len(commits) == 0 {
+	if view.NoCommits {
 		if op != nil {
 			// sync briefly checks out the base commit while it builds each PR's branch.
 			fmt.Printf("Note: a git sd %s is running and has the branch temporarily rearranged; run status again in a moment.\n", op.Command)
 		}
-		fmt.Printf("No local commits found since %s.\n", baseBranch)
+		fmt.Printf("No local commits found since %s.\n", view.BaseBranch)
 		return
+	}
+	for _, w := range view.Warnings {
+		fmt.Fprintln(os.Stderr, w)
+	}
+
+	// A running sync or merge will save the metadata itself, and a save from
+	// here, made from what was loaded earlier, could overwrite what it records.
+	if op == nil {
+		if err := view.Metadata.Save(); err != nil {
+			fmt.Printf("Error saving metadata: %v\n", err)
+		}
+	}
+
+	ui.PrintTable(view.Header, view.Rows)
+	for _, w := range view.Failures.warnings() {
+		fmt.Fprintln(os.Stderr, w)
+	}
+}
+
+// statusFailure is an error from buildStatusView that carries the exact line
+// `status` prints for it (the cause alone is what `watch` reports).
+type statusFailure struct {
+	line  string
+	cause error
+}
+
+func (e *statusFailure) Error() string { return e.cause.Error() }
+func (e *statusFailure) Unwrap() error { return e.cause }
+
+// statusViewOptions say how to build the view of the branch.
+type statusViewOptions struct {
+	Columns      []string
+	Color        bool
+	Op           *operation // a sync or merge running right now, if any
+	RefreshIndex bool       // update the recorded index of entries that exist (status does; watch must not touch metadata)
+}
+
+// statusView is everything `status` shows for one moment: the table, the PRs it
+// covers with their GitHub-derived state (what `watch` follows), and what to
+// say after the table. Building it makes exactly one lookup per PR.
+type statusView struct {
+	Header []string
+	Rows   [][]string
+
+	PRs            []watchedPR // top-level groups that have a PR, in stack order
+	LookupsTotal   int         // how many PRs were looked up
+	LookupsFailed  int         // ... and how many of those lookups failed
+	FirstLookupErr error
+
+	Failures lookupFailures // for the warnings printed after the table
+	Warnings []string       // problems building the view (stderr)
+	Metadata *metadata.Metadata
+
+	NoCommits  bool // nothing in range: there is no table
+	BaseBranch string
+}
+
+// buildStatusView reads the branch, the metadata and GitHub and builds the
+// status table. It writes nothing: saving the metadata is the caller's job.
+func buildStatusView(opts statusViewOptions) (*statusView, error) {
+	columns, color, op := opts.Columns, opts.Color, opts.Op
+	baseBranch, _, since, err := git.ResolveBaseBranch()
+	if err != nil {
+		return nil, &statusFailure{line: fmt.Sprintf("Error: %v", err), cause: err}
+	}
+
+	commits, err := git.GetCommitsInRange(since)
+	if err != nil {
+		return nil, &statusFailure{line: fmt.Sprintf("Error getting commits: %v", err), cause: err}
+	}
+
+	if len(commits) == 0 {
+		return &statusView{NoCommits: true, BaseBranch: baseBranch}, nil
 	}
 
 	m, err := metadata.Load()
 	if err != nil {
-		fmt.Printf("Error loading metadata: %v\n", err)
-		os.Exit(1)
+		return nil, &statusFailure{line: fmt.Sprintf("Error loading metadata: %v", err), cause: err}
 	}
 
-	// Sync indices and prepare rows
-	var rows [][]string
+	view := &statusView{Header: statusHeader(columns), Metadata: m, BaseBranch: baseBranch}
 
 	// Precompute each commit's current physical index, so a sub-commit's
 	// label can show its PARENT's index (see SPEC.md's "Hierarchical Indexing"), not its own.
@@ -101,6 +171,35 @@ func runStatus(args []string) {
 	}
 	prInfo := fetchPRInfos(prNumbers)
 
+	// The PRs themselves (for watch): one per top-level group that has a PR,
+	// with its place among its Stack Set's groups and the state GitHub reports.
+	groups := GroupCommits(commits, m)
+	setSize := map[string]int{} // every group counts, so the place matches the order status shows
+	for _, g := range groups {
+		setSize[g.StackSet]++
+	}
+	placed := map[string]int{}
+	for _, g := range groups {
+		placed[g.StackSet]++
+		cm := m.Commits[g.TopLevelID]
+		if cm.PRNumber == 0 {
+			continue
+		}
+		title, _, _ := strings.Cut(g.Commits[0].Message, "\n")
+		p := watchedPR{Number: cm.PRNumber, URL: cm.PRURL, StackSet: g.StackSet, Title: title,
+			Position: placed[g.StackSet], SetSize: setSize[g.StackSet]}
+		view.LookupsTotal++
+		if lk, ok := prInfo[cm.PRNumber]; ok && lk.err == nil && lk.info != nil {
+			p.Marker = classifyPR(lk.info)
+		} else {
+			view.LookupsFailed++
+			if view.FirstLookupErr == nil && ok {
+				view.FirstLookupErr = lk.err
+			}
+		}
+		view.PRs = append(view.PRs, p)
+	}
+
 	// Whether a sub-commit has reached its PR is judged by patch-id; compute
 	// them (one pipeline) only if some sub-commit's parent has a PR.
 	var patchIDs map[string]string
@@ -115,12 +214,12 @@ func runStatus(args []string) {
 		}
 	}
 	if patchErr != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not check which sub-commits are in their PRs: %v\n", patchErr)
+		view.Warnings = append(view.Warnings, fmt.Sprintf("Warning: could not check which sub-commits are in their PRs: %v", patchErr))
 	}
 
 	// A failed lookup is shown as unavailable, never guessed; say why once,
 	// after the table (see lookupFailures).
-	failures := summarizeLookups(prNumbers, prInfo)
+	view.Failures = summarizeLookups(prNumbers, prInfo)
 
 	// We'll track the order for metadata synchronization
 	for i, c := range commits {
@@ -135,7 +234,7 @@ func runStatus(args []string) {
 			// No git-sd-id yet: this commit hasn't been tracked, so there's no
 			// metadata to sync or read. Run 'git sd track' to assign one.
 			untracked := ui.MarkerFor(ui.Untracked)
-			rows = append(rows, statusRow(columns, map[string]string{
+			view.Rows = append(view.Rows, statusRow(columns, map[string]string{
 				"Icon":    untracked.Icon,
 				"Status":  statusWord(untracked, color),
 				"Index":   fmt.Sprintf("%d", i),
@@ -153,7 +252,7 @@ func runStatus(args []string) {
 		// Refresh the recorded index of an entry that exists. A commit with no
 		// entry (tracked but not assigned) is Ready and records nothing, so
 		// status never creates an entry just to hold an index (B-022).
-		if ok {
+		if ok && opts.RefreshIndex {
 			cm.Index = i
 			m.Commits[id] = cm
 		}
@@ -183,7 +282,7 @@ func runStatus(args []string) {
 			indexStr = fmt.Sprintf("%d.%s", parentIdx, cm.SubRank)
 		}
 
-		rows = append(rows, statusRow(columns, map[string]string{
+		view.Rows = append(view.Rows, statusRow(columns, map[string]string{
 			"Icon":      icon,
 			"Status":    word,
 			"Index":     indexStr,
@@ -194,19 +293,7 @@ func runStatus(args []string) {
 			"PR":        cm.PRURL,
 		}))
 	}
-
-	// A running sync or merge will save the metadata itself, and a save from
-	// here, made from what was loaded earlier, could overwrite what it records.
-	if op == nil {
-		if err := m.Save(); err != nil {
-			fmt.Printf("Error saving metadata: %v\n", err)
-		}
-	}
-
-	ui.PrintTable(statusHeader(columns), rows)
-	for _, w := range failures.warnings() {
-		fmt.Fprintln(os.Stderr, w)
-	}
+	return view, nil
 }
 
 // stdoutIsTerminal is ui.StdoutIsTerminal; tests replace it.
