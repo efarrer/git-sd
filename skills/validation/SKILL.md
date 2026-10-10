@@ -14,8 +14,8 @@ This document defines a portable, agent-neutral process for validating the `git-
 The agent should iterate autonomously through these steps:
 
 ### Phase A: Build & Test
-1.  **Rebuild:** Execute `make clean && make test`.
-2.  **Test Execution:** Run `./git-sd-test`. This suite validates both low-level `git` operations and high-level `gh` PR management.
+1.  **Rebuild:** Execute `make clean && make build`.
+2.  **Test Execution:** Run `make test` (equivalently `go test -v -count=1 ./integration/`). The suite builds the `git-sd` binary itself in `TestMain` and validates both low-level `git` operations and high-level `gh` PR management. It is gated on `GIT_SD_TEST_REPO`: if that variable is unset, the tests skip cleanly (exit 0) instead of failing, so it MUST be set to the sacrificial repo for validation.
 3.  **Data Capture:** Log all stdout/stderr from the test run.
 
 ### Phase B: Analysis & Categorization

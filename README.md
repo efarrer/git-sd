@@ -5,20 +5,26 @@
 ## Quick Start
 
 ### Prerequisites
-- **GitHub CLI (`gh`):** Installed and authenticated (`gh auth status`).
-- **Git:** Version 2.30 or higher.
+- **GitHub CLI (`gh`):** Installed and authenticated (`gh auth login`). git-sd tells you if it isn't, the first time a command needs it.
+- **Git:** Any version works. Git >= 2.38 is used when available (real content-based rename detection for stack-set-assignment validation); older git falls back to an equivalent plumbing-based check with a minor rename-detection fidelity gap — see DEVELOPMENT.md's "Git Version Compatibility."
 
 ### Installation
 ```bash
-make build
-# Move the 'git-sd' binary to your PATH
+make install
+# Installs the binary and man page under /usr/local by default.
+# Override the location with: make install PREFIX=~/.local
 ```
+This also makes `git sd --help` work (it opens the installed man page, same
+as `git commit --help`); `git sd -h` and `git sd --agent` work either way,
+without installing anything, since they're printed directly by the binary.
 
 ### Basic Workflow
-1. **Status:** Run `git sd status` to see your commits. The tool will automatically add `git-sd-id` trailers.
+1. **Track:** Run `git sd track` to add `git-sd-id` trailers to new commits (or just run `git sd status` first — it's read-only and shows which commits still need tracking).
 2. **Assign:** Group commits into a Stack Set: `git sd assign feat-a:0-2`.
 3. **Sync:** Create/Update GitHub PRs: `git sd sync feat-a`.
-4. **Merge:** Safely merge approved PRs in the stack: `git sd merge feat-a`.
+4. **Address PR feedback:** Make the fix (it lands at `HEAD`), then `git sd fixup <target-index>` to attach it as the next sub-commit of that PR — no index/rank math required.
+5. **Merge:** Merge approved PRs in the stack on GitHub: `git sd merge feat-a` (your local branch is untouched).
+6. **Reconcile:** after PRs land (via `git sd merge` or GitHub's UI), `git sd rebase` drops the landed commits from your branch and retires their tracking; the next `git sd sync` deletes their remote branches. Safe to run at any point, even mid-stack, since a Stack Set can keep growing after a partial merge (see SPEC.md's "Living Stack Sets"). `git sd rebase --rollback` undoes it.
 
 ## Documentation Structure
 

@@ -1,0 +1,267 @@
+.TH GIT-SD 1 "2026-09-10" "git-sd" "General Commands Manual"
+.SH NAME
+git-sd \- manage a stacked-diff workflow with GitHub Pull Requests
+.SH SYNOPSIS
+.B git sd
+.I command
+.RI [ args ...]
+.SH DESCRIPTION
+.B git-sd
+manages a stacked-diff workflow: a linear sequence of commits on the current
+branch. Each commit is referenced everywhere by its 0-based
+.B physical position
+in
+.B git sd status
+output (the "Index" column), not by hash or git-sd-id \(em physical order is
+the source of truth. Commits may be grouped into a named
+.I Stack Set
+(1-10 alphanumeric/hyphen characters) and pushed as GitHub Pull Requests, one
+PR per top-level commit plus any sub-commits folded into it.
+.PP
+Every command except
+.B status
+prints exactly one line of output on success. Errors print one or more lines
+starting with "Error: " and set a non-zero exit status. A conflict during
+.B move
+or
+.B fixup
+leaves a standard git rebase in progress: resolve it and run git rebase --continue,
+or run git rebase --abort to restore the original order. A conflict during
+.B rebase
+behaves the same way.
+.PP
+A commit's identity trailer (git-sd-id) is added by
+.BR track ,
+or implicitly by
+.B assign
+and
+.B move
+(both track any untracked commits in range before acting).
+.B status
+never mutates commits \(em a commit with no id yet shows Status
+.RB \[oq] \(em \[cq]
+(Untracked).
+.PP
+Commit states, in order:
+.B Untracked
+(\(em) \(->
+.B Ready
+(blank Status, has an id, no Stack Set) \(->
+.B Assigned
+(\(sq, has a Stack Set, no PR yet) \(-> has a PR (one of the PR-state
+indicators below) \(->
+.BR Merged .
+.PP
+PR-state indicators shown in the Status column once a commit has a PR:
+state unavailable (the lookup failed; status then prints one warning), in progress, conflict/base mismatch, changes requested, CI failing, CI
+running, draft, review required, approved, merged, closed (run
+.B git sd status --legend
+to see the exact symbol for each).
+.SH COMMANDS
+.TP
+.B track
+Assigns a git-sd-id trailer to every commit since the base branch that
+doesn't already have one. Idempotent. Not required before
+.B assign
+or
+.BR move ,
+which both self-track; useful on its own to move commits from Untracked to
+Ready in
+.B status
+without performing any other action.
+.TP
+.BI "status " "[--legend] [--no-legend]"
+Lists every commit since the base branch: Icon (the state's emoji, blank
+header), Status (the state's word), Index, Stack Set, git-sd-id, Hash,
+Message, and PR columns. Read-only. Index is
+.I N
+for a top-level commit or
+.I N.M
+for a sub-commit attached to top-level index
+.IR N .
+.RS
+.TP
+.B --legend
+Force-show the Status/PR-state legend above the table (and above the
+"No local commits" message or any error).
+.TP
+.B --no-legend
+Force-hide it (default comes from git config
+.BR sd.status.legend ,
+unset = hidden).
+.RE
+.TP
+.BI "assign " "<assignment>..."
+Assigns, reassigns, or unassigns commits to Stack Sets by index. One or more
+.I assignment
+arguments, each one of:
+.RS
+.TP
+.I <set-name>:<index-list>
+assign/reassign to a Stack Set
+.TP
+.I :<index-list>
+unassign (remove from any Stack Set)
+.RE
+.IP
+.I index-list
+is comma-separated; each item is a single physical index
+.RI ( N ),
+an inclusive range
+.RI ( A - B ),
+or a direct sub-index assignment
+.RI ( N . M ,
+which sets physical index
+.IR N 's
+sub-index to
+.I M
+and assigns it to
+.I <set-name>
+without validating that a top-level parent precedes it \(em for that
+guarantee use
+.B move
+instead). Reassigning a commit already in one set to another moves it
+implicitly. Tracks any untracked commits in range first.
+.TP
+.BI "move " "<source-index>:<destination-index>[.<sub-index>]"
+Reorders commits and/or attaches a commit as a sub-commit. If
+.I sub-index
+is given, the commit is attached to the nearest top-level commit at or before
+.I destination-index
+in the resulting order, inheriting its Stack Set \(em that commit must
+already be a top-level commit of a Stack Set, or the move fails with no
+changes made. Otherwise rebuilds the affected range via real cherry-picks,
+which can genuinely conflict if content depends on physical order. Tracks
+any untracked commits in range first.
+.TP
+.BI "sync " "[<set-name> | --all]"
+Synchronizes local branch state with GitHub: pushes each Stack Set's
+branch(es) and creates/updates its PR(s), then registers the set's PR chain
+as a GitHub Stack (once it has 2+ PRs). Also deletes the remote branches of
+commits retired by
+.B rebase
+or
+.B merge
+(after retargeting surviving PRs), and dissolves a Stack Set none of whose
+commits remain. Omitted or
+.B --all
+processes every Stack Set; a specific
+.I set-name
+processes only that one. After the passes it lists what changed, one line per
+PR created or updated (number, Stack Set, title, URL), then the number of PRs
+left unchanged. A PR's title, body and base are sent to GitHub only when they
+changed since the last sync.
+.TP
+.BI "merge " "[<set-name>] [--upto <index>] | --all"
+Submits the top-most in-range PR to GitHub's native async stack-merge API,
+which atomically merges every PR up through it and retargets everything
+above it onto the new base. Approval/CI gating is entirely GitHub branch
+protection. GitHub only: it never touches the local branch; run
+.B rebase
+afterwards to drop the merged commits locally.
+.RS
+.TP
+.BI --upto " index"
+Limit the merge to the bottom prefix of the set: top-level commits with
+physical index <=
+.IR index .
+Every group at or below the target must already be synced. Cannot combine
+with
+.BR --all .
+.TP
+.B --all
+Merge every Stack Set, each up to its own top. Cannot combine with
+.BR --upto .
+.RE
+.IP
+A
+.I set-name
+is required unless
+.B --all
+is given.
+.TP
+.BI "rebase " "[--rollback [<n>] | --list]"
+Reconciles the local branch after PRs have landed, however they were merged
+(squash, merge commit, or rebase-merge). Fetches the base branch and compares
+each merged PR with what landed by net content: fully represented upstream
+(identical, or upstream has more) -> dropped; local has extra changes that
+never landed -> replaced by one follow-up commit carrying only those changes,
+kept in the same Stack Set (run sync to open its PR); local and upstream changed
+the same lines differently -> a git rebase conflict on that follow-up commit.
+The remaining commits are rebuilt onto the updated base. A merged PR whose
+merge commit is not on the base branch aborts the command with nothing
+changed. A closed PR's
+commits stay on the branch but lose their tracking. Strictly local: remote
+branches of finished PRs are deleted by the next
+.BR sync .
+Refuses to run with uncommitted changes. A backup (HEAD plus metadata) is
+recorded first; a conflict during the rebuild leaves a standard git rebase in
+progress (git rebase --continue, --skip or --abort).
+.RS
+.TP
+.BI "--rollback " "[<n>]"
+Restore backup
+.I n
+(1, the default, is the most recent): resets the branch and restores metadata
+together.
+.TP
+.B --list
+List the available backups, most recent first.
+.RE
+.SH OPTIONS
+.TP
+.B --help
+Open this manual page.
+.TP
+.B -h
+Print a short usage summary and exit.
+.TP
+.B --agent
+Print a detailed, complete command reference intended for AI agents/scripts
+driving git-sd programmatically \(em includes exact argument grammar and
+error conditions for every command in plain text, not just this page's prose.
+.SH CONFIGURATION
+Set with
+.B git config <key> <value>
+for the current project, or
+.B git config --global <key> <value>
+for all projects.
+.TP
+.B sd.status.legend
+[true|false] Always show the status legend in
+.BR status .
+Default: false.
+.TP
+.B sd.status.columns
+[string] Comma-separated column list for
+.BR status .
+Default: "Icon,Status,Index,Stack Set,git-sd-id,Hash,Message,PR". An unknown column name is an error.
+.TP
+.B sd.status.color
+[true|false] Color the Status word of
+.B status
+by state. Default: true. Only used when standard output is a terminal, and off when
+.B NO_COLOR
+is set or
+.B TERM
+is
+.BR dumb .
+.TP
+.B sd.base-branch
+[string] Upstream branch to target, as "<remote>/<branch>";
+.I remote
+must be a configured git remote. If unset: the "origin" remote's main branch
+if origin exists, else the sole remote's main branch if exactly one remote
+is configured; otherwise commands fail asking you to set this explicitly.
+Useful for testing against a branch without main's approval guards.
+.SH EXIT STATUS
+.B 0
+on success,
+.B non-zero
+on any error.
+.SH SEE ALSO
+.B git-sd --agent
+for a complete machine-readable reference;
+.B git-sd -h
+for a short summary; the project's SPEC.md for the full behavioral
+specification.
