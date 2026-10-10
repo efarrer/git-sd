@@ -3,6 +3,12 @@
 ## Overview
 A command-line tool designed to enable a "stacked diff" workflow with GitHub, allowing developers to manage a series of dependent pull requests efficiently.
 
+## Terminology
+This document uses "stack" at three distinct levels of specificity — worth disambiguating up front now that the middle and last both refer to concrete, literal things, not just the general pattern:
+- **stack / stacked diff** (lowercase): the general industry development pattern — breaking a large change into a sequence of small, dependent PRs. Not a git-sd- or GitHub-specific object; used this way in "Workflow Goals" and "Key Concepts" below, which describe the pattern in the abstract before either construct below exists.
+- **Stack Set** (capitalized): git-sd's own local bookkeeping construct — a named sequence of commits assigned to form a coherent PR chain (see "Enhancement: Stack Sets" below). A Stack Set does **not** always correspond to a registered GitHub Stack — see next.
+- **Stack** (capitalized, GitHub's term): the actual object registered via GitHub's Stacked Pull Requests REST API (`internal/github.CreateStack`/`Unstack`, identified by a `number`). A Stack Set is only registered as a GitHub Stack once it has 2+ PRs — a single-PR Stack Set has no corresponding Stack at all. See DESIGN.md's "GitHub Stacks Backend" section for the full mechanics.
+
 ## Core Requirements
 
 ### 0. Spec-driven Development
@@ -11,15 +17,18 @@ A command-line tool designed to enable a "stacked diff" workflow with GitHub, al
 - **Disposable Implementation:** If the implementation deviates from the spec or becomes buggy, it should be possible to delete the generated code and regenerate it from the updated spec.
 - **Language Agnostic:** The choice of implementation language is secondary and may change as the tool evolves.
 
-### 1. Startup & Environment Validation
-- On startup, the tool must verify:
-    - `gh` is installed and available in the system's PATH.
-    - The user is authenticated with `gh` (e.g., via `gh auth status`).
-- If either check fails, the tool should provide a clear error message and exit.
+### 1. GitHub CLI Availability
+- A missing or unauthenticated `gh` is reported the same way by whichever command first needs GitHub, with one of two messages:
+    - `'gh' CLI not found. Please install it to use git-sd.`
+    - `You are not authenticated with 'gh'. Please run 'gh auth login'.` (covers not logged in, and an expired or invalid token)
+- Commands that never touch GitHub (`track`, `assign`, `move`, `fixup`, `help`) work without `gh`. `status` and `rebase` only need `gh` when they have synced PRs to look up.
+- `sync` must never leave pushed branches without PRs because `gh` is unusable: if `gh` is missing or not authenticated it fails before pushing anything.
+- `status` with PRs to look up but no usable `gh` still prints the local table (PR states shown as unknown) followed by one line `Warning: PR states unavailable: <message>`, and exits 0.
+- A `git push` or `git fetch` that fails to authenticate keeps git's own error text and gets one extra hint line: "If you use gh as git's credential helper, run 'gh auth login' and 'gh auth setup-git'."
 
 ### 2. Output Philosophy
 - **High-Signal, Low-Noise:** `git sd status` is the primary interface for inspecting the stack.
-- **Single-Line Status for Actions:** All commands other than `status` (e.g., `assign`, `move`, `sync`, `merge`, `cleanup`) MUST output only a single line of status text upon successful initiation or completion.
+- **Concise Output:** `track`, `assign`, `move` and `fixup` print a single line on success (more only when a conflict or another problem needs explaining). `sync`, `merge` and `rebase` print one line per outcome and a closing line (for `sync`, see its Output below) and nothing about their internal steps. Warnings and errors print as they occur. An error is always one line of the form `Error: could not <action>: <reason>`.
 - **Detailed Error Reporting:** Failure states (e.g., rebase conflicts) SHOULD provide multi-line context to assist in resolution, but the "happy path" remains concise.
 
 ## Workflow Goals
@@ -44,25 +53,38 @@ To support working on multiple unrelated features or fixes simultaneously on a s
 - **Top-Level Commits & Sub-commits:**
     - A Stack Set consists of a sequence of top-level commits.
     - Each top-level commit (and its associated **sub-commits**) is submitted as a single GitHub PR.
-    - **Sub-commits (PR Feedback):** Feedback on a PR is addressed by adding additional commits. These are grouped with their parent top-level commit.
+    - **Sub-commits (PR Feedback):** Feedback on a PR is addressed by adding additional commits, attached to their parent top-level commit by an explicit reference (not inferred from physical position — see DESIGN.md's Metadata Schema for how this is represented) — see "Hierarchical Indexing" below. `git sd fixup <target>` is the normal way to create one (attaches HEAD); `git sd move` handles reordering, promotion, and reparenting. A sub-commit's Stack Set is always a mirror of its parent's — it can never be assigned independently, and reassigning (or unassigning) the parent cascades to all of its sub-commits automatically. The model is exactly two levels — a sub-commit can never itself have sub-commits.
 - **Naming:**
     - Each Stack Set is assigned a short name (1-10 characters, alphanumeric and hyphens).
 - **Branch Naming:**
-    - Generated branch names are configurable via `sd.pr.branch-name-format`.
-    - **Default Format:** `sd/{user}/{stack-set-name}/{index}`.
+    - Branch names are a slug of the commit's subject line plus a short `git-sd-id` suffix for collision-safety (e.g. `fix-bug-check-nil-a1b2c`). The slug is computed once, at first sync, and stored in metadata — rewording a commit afterward doesn't rename its branch or churn its PR. If the subject slugifies to empty (e.g. pure emoji or non-Latin script), the `git-sd-id` alone is used as the branch name.
+    - Branch names are an internal implementation detail; GitHub's native Stacks UI (not the branch name) is what users navigate by.
 - **Commit Identification:**
     - `git-sd` uses a unique **git trailer** named `git-sd-id` (e.g., `git-sd-id: s1234`) within commit messages.
-    - **Idempotency:** `git sd status` MUST check for the presence of an existing `git-sd-id` trailer before adding one.
+    - **Idempotency:** `git sd track` MUST check for the presence of an existing `git-sd-id` trailer before adding one.
+    - **Trailer Transparency:** the trailer is purely internal bookkeeping (`metadata.json` is its source of truth) and is stripped from the copy of each commit pushed to GitHub — it never appears in a PR a reviewer sees.
 - **Hierarchical Indexing:**
-    - A top-level index (e.g., `1`, `2`) represents a primary commit/PR.
-    - A sub-index (e.g., `1.1`, `1.2`) represents a **sub-commit** grouped with the top-level parent.
+    - A top-level index (e.g., `1`, `2`) represents a primary commit/PR, addressed by its current physical position.
+    - `N.R` addresses a **sub-commit**: `N` is its parent's *current* physical index, `R` is its rank (see DESIGN.md's Metadata Schema for its internal representation). Ranks let a new sub-commit be inserted between existing siblings without renumbering anything; `status` always prints a rank exactly as stored, so it's copy-pasteable back into `move`/`assign`/`fixup`.
+    - `N.R` is only ever used to *reference an existing* sub-commit (as `move`'s source, or `assign`'s validation form). A destination/target argument's integer part always names a plain top-level commit, even when it carries a new rank to assign — see `move`/`fixup` below.
 - **Commit States:**
+    - **Untracked:** Commit has no `git-sd-id` trailer yet. `git sd status` never mutates commits itself; run `git sd track` to assign one.
     - **Ready:** Commit has an `git-sd-id` trailer but is not assigned to any Stack Set.
     - **Assigned (No PR):** Commit is assigned to a Stack Set but has no corresponding PR on GitHub.
     - **Assigned (With PR):** Commit is assigned to a Stack Set and has an active PR.
+    - **Unsynced (sub-commit only):** A sub-commit whose parent has an open PR but which is not in that PR yet; the next `git sd sync` puts it there.
     - **Merged:** Commit is part of a Stack Set, and its corresponding PR has been merged.
-- **Cleanup:**
-    - The user explicitly runs `git sd cleanup <set-name>` to remove the metadata and generated branches.
+- **Living Stack Sets:**
+    - A Stack Set is not a one-shot construct — created once and merged all at once. PRs can be merged off the **front** of the stack (via `git sd merge`, `--upto`, or directly on GitHub) while new commits keep getting `assign`ed to the same Stack Set and `sync`ed onto the **back**, for as long as the set stays in use.
+    - `rebase` is safe to run at any point in that lifecycle: it only ever retires metadata for commits it can positively confirm are finished (landed upstream, or their PR closed) — never a commit that's still open or unsynced. A Stack Set's own entry and GitHub Stack registration are only dissolved (by `sync`) once no commit references the set any more. See "Reconciling with Upstream" below.
+    - After PRs are merged (via `git sd merge` or GitHub's UI), run `git sd rebase` to drop the landed commits from the local branch, then `git sd sync <set-name>` to retarget the surviving PRs and delete the finished PRs' remote branches.
+- **Reconciling with Upstream (`rebase` + `sync`):**
+    - `git sd rebase` is strictly local (it never mutates GitHub). It fetches the base branch, identifies each group whose PR is `MERGED` into the base branch, verifies by content that the group is fully represented upstream (whatever merge method GitHub used — squash, merge commit, or rebase-merge), drops those groups, and rebuilds the remaining commits on the updated base.
+    - **Merged-group classification:** each `MERGED` group is compared with what landed as a whole, regardless of how its commits were split (e.g. 2 local commits against 1 squashed upstream commit works). (a) *Fully represented upstream* — identical, or upstream has more (e.g. reviewer edits applied on GitHub): the group is dropped and its tracking retired. (b) *Local has extra changes that never landed* (e.g. amended after the last sync): the group's commits are replaced by one **follow-up commit** carrying only those changes. It is kept on the branch at the group's position, with message `Follow-up to PR #N: <subject>`, the original author, a new `git-sd-id`, and the same Stack Set (no PR yet — run `git sd sync` to open one); the command prints what it kept. The group's sub-commit structure collapses into that one commit. (c) *Local and upstream changed the same lines — or adjacent lines, as in any git merge — differently*: a genuine conflict, presented as a standard git rebase conflict on the follow-up commit (resolve it, `git rebase --skip` to take upstream, or `git rebase --abort`). If the PR's merge commit is not on the base branch, or the group cannot be replayed to compare, `rebase` refuses and changes nothing, naming the PR.
+    - A group whose PR is `CLOSED` without merging keeps its commits on the local branch, but its metadata is retired (the commits become Ready again).
+    - A commit whose metadata is present but that is no longer anywhere in local history (it has already landed, or the user dropped or skipped it) is retired — unless its PR is still open (or its state can't be checked), in which case its tracking and remote branch are left alone with a warning, since retiring would close the PR.
+    - Retiring a commit deletes its metadata and its local branch; its remote branch is queued and deleted by the next `sync`, *after* that sync has retargeted any PR that was based on it. `sync` never deletes a queued branch that any open PR (git-sd's or not) still uses as its base — deleting it would make GitHub close that PR; the branch stays queued, with a warning naming the PR(s), until nothing targets it.
+    - `sync` dissolves a Stack Set whose commits have all been retired: it unstacks its GitHub Stack registration (if any) and removes the set's entry. PRs that are merged, merging, or queued for merge can't be unstacked and are left in place by GitHub.
 - **Partial Merge Handling:**
     - If early PRs in a Stack Set are merged, subsequent PRs automatically update their PR base to the upstream branch (e.g., `main`) during `sync`.
 - **Local Metadata & Source of Truth:**
@@ -71,12 +93,11 @@ To support working on multiple unrelated features or fixes simultaneously on a s
 - **Assignment Interface:**
     - Developers can assign or reassign commits to a Stack Set using a flexible index-based command (e.g., `feat-a:1,3,5-7`).
 - **PR Linking:**
-    - Every PR in a Stack Set must include a "Stack" table in its description with "Previous" and "Next" links.
-    - The tool uses `<!-- git-sd-start -->` and `<!-- git-sd-end -->` markers to update descriptions safely.
+    - git-sd does not write its own "Stack" table or UI-merge warning into PR descriptions. Each PR's chain is registered with GitHub as a native Stack (via the Stacks REST API), and GitHub's own Stacks UI renders stack navigation — merging is safe from `git sd merge`, `gh stack merge`, or the GitHub web UI directly, since native retargeting-on-merge keeps the rest of the stack consistent regardless of which one is used.
+    - A PR's description is just the commit's own message body (trailer stripped), with no injected markers or table.
 - **Merging Strategy (`git sd merge`):**
-    - Identifies the **top mergeable PR** in the stack.
-    - Squashes associated **sub-commits** into the parent top-level commit.
-    - Combines clean, top-level commits into a **single temporary PR** for merging into `main`.
+    - Delegates the actual merge to GitHub's native async stack-merge API rather than manually squashing and reusing a PR's branch: submitting the top-most PR in the requested range merges every PR in the stack up to and including it, each landing on the base branch as its own commit (not a single squashed commit), with every PR above it server-side rebased onto the new base.
+    - Approval/CI safeguards are enforced entirely by whatever branch protection is configured on the base branch — git-sd does not check review or CI status itself before submitting a merge.
 
 ## Command Reference
 
@@ -86,64 +107,118 @@ Used in `git sd status` to provide a high-signal overview of commit and PR state
 #### Legend Example
 ```text
 Commit States:
-      Ready: Commit has an git-sd-id and is ready to be assigned to a Stack Set.
-  📦  Assigned: Commit is assigned to a Stack Set.
+  —   Untracked   Commit has no git-sd-id; run 'git sd track' to add one.
+      Ready       Commit has a git-sd-id and is ready to be assigned to a Stack Set.
+                  Action: Run 'git sd assign <set-name>:<index-list>' to group it.
+  📦  Assigned    Commit is assigned to a Stack Set and has no PR yet.
+                  Action: Run 'git sd sync' to create/update the PR.
+  📤  Unsynced    A sub-commit that is not in its PR yet: added, changed or moved into the PR since the last sync.
+                  Action: Run 'git sd sync' to put it in the PR.
 
-PR States (Prioritized Display):
-  🔄  In Progress: A local 'sync' or merge operation is active.
-  💥  Conflict/Base Mismatch: Critical; commit cannot be applied to target base.
-  ❌  Changes Requested: High priority; address feedback.
-  🚨  CI Failing: High priority; code or tests failed.
-  🟡  CI Running: Intermediate; wait for results.
-  👁   Review Required: Intermediate; ready for approval.
-  ✅  Approved: Low priority; ready to merge.
-  🚧  Draft: PR is a work-in-progress.
-  🚢  Merged: Final state.
-  🌑  Closed: Abandoned.
+PR States:
+  Each commit shows the first state below that applies; Merged and Closed always win.
+  ❓  Unknown     The PR's state could not be read (the lookup failed); the PR itself may be fine.
+                  Action: Re-run 'git sd status'.
+  🔄  Syncing     A 'git sd sync' or 'git sd merge' is running on this Stack Set right now (seen from another terminal).
+  💥  Conflict    GitHub reports a merge conflict between the PR and its base branch; it cannot be merged as it is.
+                  Action: Rebase onto the updated base and resolve the conflicts ('git sd rebase', or a standard 'git rebase'), then 'git sd sync'.
+  ❌  Changes     Address the reviewer's feedback.
+                  Action: Create a fix commit, then 'git sd fixup <target-index>' to attach it as the next sub-commit of that PR (or 'git sd move' for manual placement/reordering).
+  🚨  CI failed   Code or tests failed.
+                  Action: Fix the code and sync.
+  🟡  CI running  Wait for results.
+  🚧  Draft       The PR is a work-in-progress; it can't be merged yet.
+  👀  Review      Waiting for a review (none yet, or more required).
+  ✅  Approved    Ready to merge.
+  🚢  Merged      Final state; the PR landed.
+  🌑  Closed      The PR was closed without merging.
 ```
 
-- **Dynamic Alignment:** Column widths are calculated dynamically in `git sd status`.
+- **Syncing:** while a `git sd sync` or `git sd merge` is running on a repository, `status` run from another terminal shows `Syncing` for the assigned commits of the Stack Set(s) that operation is processing (every set if it was given none, or `--all`). It lets you see that a PR's state is about to change, instead of a state that is already stale. Merged, Closed and Unknown rank above it. It is shown only while the process is alive: if `sync` or `merge` is killed or crashes, the marker disappears by itself. While one is running, `status` does not write any state (it normally refreshes each commit's recorded Index), so it cannot overwrite what the running command is about to save; and because `sync` briefly rearranges the branch while it builds each PR's branch, a `status` run at that instant may find no commits and says so, with a note to run it again.
+- **Conflict:** `Conflict` is shown only when GitHub itself reports that the PR conflicts with its base branch (it cannot be merged as it is). It is not inferred locally: a PR whose base merely differs from what the local stack expects (for instance after `git sd rebase` and before the next `git sd sync` retargets it) is not a conflict. While GitHub is still working out whether there is a conflict, nothing is shown. Conflict ranks above Changes requested, CI, Draft, Review and Approved.
+- **CI states:** `CI failed` is shown when any check run or commit status on the PR's head commit has failed (a check run that concluded as failure, timed out, failed to start or needs action; a commit status in failure or error). `CI running` is shown when none has failed but any is not finished (a check run that is queued, in progress, pending or waiting; a commit status that is pending or expected). Cancelled, skipped, neutral and stale check runs do not count either way, and a PR with no checks has no CI state. Both rank above Draft, Review and Approved (see the precedence below), so an approved PR whose CI is still running shows `CI running`, not `Approved`.
+- **Marker precedence:** each commit shows exactly one marker: the first that applies, in the order listed under "PR States", except that Merged and Closed always win once a PR's state is known (and PR state unavailable applies only when it could not be read). `Assigned` is shown only for a commit that has no PR yet; an open PR that nobody has reviewed yet shows Review, and a draft PR shows Draft even if it has been approved.
+- **Dynamic Alignment:** Column widths are calculated dynamically in `git sd status`, by how wide each cell is on a terminal (an emoji is two columns wide, a color escape sequence none), so the columns stay aligned whatever the markers are.
 
 ### Configuration
-- `sd.status.legend` [true|false]: (Default: false)
-- `sd.status.columns` [string]: (Default: "Status,Index,Stack Set,git-sd-id,Hash,Message,PR")
-- `sd.status.color` [true|false]: (Default: true)
-- `sd.base-branch` [string]: The upstream branch to calculate the merge base against. (Default: tracked upstream or `origin/main`)
-- `sd.pr.required-reviewers` [number]: (Default: 1)
-- `sd.pr.branch-name-format` [string]: (Default: "sd/{user}/{stack-set-name}/{index}")
+- `sd.status.legend` [true|false]: Always show the status emoji legend in 'status'. (Default: false)
+- `sd.status.columns` [string]: Comma-separated list of columns for 'git sd status'. (Default: "Icon,Status,Index,Stack Set,git-sd-id,Hash,Message,PR")
+- `sd.status.color` [true|false]: Color the `Status` word in `git sd status` by state (green approved; red failing, conflict or changes requested; yellow waiting, running, draft, unknown or unsynced; dim merged, closed, untracked or ready). (Default: true.) Color is only ever used when standard output is a terminal, so piped or redirected output, and anything a script or agent parses, is always plain. It is also off when the `NO_COLOR` environment variable is set to a non-empty value (see no-color.org) or `TERM` is `dumb`. Only the word is colored, never the icon, so alignment is unaffected.
+- `sd.base-branch` [string]: The upstream branch to calculate the merge base against, and the destination PRs are created/merged into. Must be of the form `<remote>/<branch>`, where `<remote>` is one of the repository's configured git remotes — any remote works, not just `origin`; any other value is rejected at startup. If unset, git-sd infers a default: the `origin` remote's `main` if `origin` is configured, else the repository's sole remote's `main` if there is exactly one configured remote; if neither holds (no remotes, or multiple with none named `origin`), git-sd refuses to guess and asks for `sd.base-branch` to be set explicitly. Overriding this is a repo-level setting, useful for pointing the whole tool at a throwaway branch instead of `main`/`master` — e.g. when testing against a real repo without the branch-protection/approval rules that gate `git sd merge`.
 
-### 0. `git sd`
-- **Description:** Displays usage information, commands, and `git config` options.
+Note: `sd.pr.required-approvals` and `sd.pr.branch-name-format` (a configurable branch-name format) no longer apply — approval enforcement is delegated entirely to GitHub branch protection, and branch names are a hardcoded slug (see "Branch Naming" above).
+
+**Note on Configuration:**
+To set values for the current project, use `git config <key> <value>`.
+To set values for all projects (home config), use `git config --global <key> <value>`.
 
 ### 1. `git sd status`
 - **Description:** Lists all commits on the current branch from the merge base with upstream.
-- **Options:** `--legend`, `--no-legend`.
+- **Empty State:** If no local commits are found since the base branch, the tool MUST output: "No local commits found since <base-branch>."
+- **Columns:** `Icon`, `Status`, `Index`, `Stack Set`, `git-sd-id`, `Hash`, `Message`, `PR`, in that order by default. Every commit shows its marker twice, as one visual column: `Icon` is the marker's emoji (its header is blank) and `Status` is the marker's word (see the legend), so a state can be read without learning the emoji. A Ready commit (tracked, not assigned to a Stack Set) has no icon and the word `Ready`. An untracked commit shows `—` and `Untracked`. A sub-commit is folded into its parent's PR and has no PR of its own, so it does not repeat the parent's state: its `Icon` and `Status` are blank, and its Message is indented with `└─ `. The one exception is `Unsynced`: a sub-commit whose parent has an open PR shows `📤 Unsynced` until the commit is in that PR as of the last `git sd sync` (it was just attached with `fixup`/`move`, amended, reworded, or moved to a different PR). `sd.status.columns` chooses and orders the columns (names are case-insensitive and may omit spaces and hyphens, e.g. `stackset`); an unknown name, or an empty list, is an error: `Error: unknown status column '<name>' (valid: Icon, Status, Index, Stack Set, git-sd-id, Hash, Message, PR)`, exit status 1, and nothing else is printed.
+- **Options:** `--legend`, `--no-legend`. The legend is shown whenever it is requested (the option or `sd.status.legend`), in every state: with no commits (above the empty-state message) and even when the base branch cannot be resolved (above the error). It never depends on repository contents.
+- **PR state lookup failures:** a PR whose state cannot be read (a failed lookup, for any reason) is shown as `❓` (PR state unavailable), never as a guessed state such as Assigned. After the table, one warning line names the PR(s) and the first error: `Warning: could not read the state of PR #12, #14: <error>`. If the cause is a missing or unauthenticated `gh`, the line is the existing `Warning: PR states unavailable: <message>` instead. `status` still exits 0.
 
-### 2. `git sd assign <assignment-string>...`
-- **Description:** Assigns or removes commits from Stack Sets. Format: `<set-name>:<index-list>` or `:<index-list>`.
+### 2. `git sd track`
+- **Description:** Assigns a `git-sd-id` trailer to every commit since the base branch that doesn't already have one. Idempotent — running it again on already-tracked commits is a no-op.
+- **Prerequisite:** A commit must be tracked before it can be referenced by index in `git sd assign` (`assign` also tracks any untracked commits itself before applying the assignment, so running `track` first is not strictly required, but makes the Untracked → Ready → Assigned progression explicit in `status`).
 
-### 3. `git sd move <source-index>:<destination-index>`
-- **Description:** Reorders commits or manages **sub-commits**.
-- **Behavior:** Automated rebase with atomic conflict handling.
-- **Output:** Single line confirming the move.
+### 3. `git sd assign <assignment-string>...`
+- **Description:** Assigns or removes **top-level commits** from Stack Sets. Format: `<set-name>:<index-list>` or `:<index-list>`.
+- **Unassigning:** Running `git sd assign :<index-list>` (e.g., `:1-3`) removes the specified commits from their current Stack Set. Cascades to every sub-commit of an unassigned top-level commit (their mirrored Stack Set clears too).
+- **Implicit Reassignment:** Assigning a commit already in `Set A` to `Set B` (e.g., `git sd assign set-b:1`) implicitly moves the commit to the new set, cascading to its sub-commits.
+- **Dotted addresses (`<N>.<R>`):** `assign` never attaches, creates, or reparents a sub-commit — that's exclusively `move`/`fixup`'s job. `<set-name>:<N>.<R>` (a real Stack Set name) is rejected outright, directing the user to `git sd move <N>.<R>:<dest>` to promote it to top-level first, then assign it separately — there's no input that would make this form change anything (it would either already match the parent's Stack Set, a no-op, or not, an error), so it's refused unconditionally rather than validated. Unassigning this way (`:<N>.<R>`, empty set name) is the one dotted form `assign` still accepts: it always succeeds, fully detaching the commit in one step — the only clean way to detach a single sub-commit without disturbing its parent or siblings.
+- **Cross-Set Dependency Validation:** Before saving, each touched Stack Set's own commits (in physical order) are validated against the base branch — simulating exactly what `sync` will later attempt (`BuildTrailerStrippedChain`), without touching the working tree. If a commit's content depends on another Stack Set's change (or on an unassigned ancestor), the assignment is refused and metadata is left untouched, naming the Stack Set it likely depends on. `sync` deliberately never chains one Stack Set onto another's content — dependent commits must be assigned to the same Stack Set together.
 
-### 4. `git sd sync [<set-name> | --all]`
-- **Description:** Synchronizes local branch state with GitHub PRs.
-- **Behavior:** Updates PR branches, metadata, and descriptions.
-- **Output:** Single line initiating the sync.
-
-### 5. `git sd merge [<set-name> | --all]`
-- **Description:** Safely merges approved PRs in a stack using the "top-mergeable" strategy.
+### 4. `git sd move <src>:<dest>[.<rank>]`
+- **Description:** The general-purpose primitive for repositioning commits and for creating, promoting, demoting, reordering, and reparenting **sub-commits**. `<dest>`'s integer part always names a top-level commit (never a sub-commit's own address, even when reparenting one — see "Hierarchical Indexing" above).
 - **Behavior:**
-    - Identifies the **top mergeable PR** in the stack.
-    - Squashes all associated **sub-commits** and lower-level top-level commits into the parent commits as needed.
-    - Reuses the **top-most PR** in the stack set for the final merge into the base branch.
-    - Closes all other PRs in the stack set that are being merged.
-    - Adds a comment to each closed PR stating that its contents have been consolidated into the top-most PR, including a link to that PR.
+    - No `<rank>`: reorders `<src>` to physical position `<dest>` as a **top-level** commit — an insertion, not a swap: whatever sits at `<dest>` or later shifts later to make room. If `<src>` was a sub-commit, it's promoted — its sub-commit attachment and rank clear, but its Stack Set is left unchanged. If `<src>` is a top-level commit with its own sub-commits, the whole group moves together as one block (shifting others by the group's size, not just one) — the sub-commits' labels update automatically since they're derived from the parent's current position, not stored.
+    - With `<rank>`: attaches/reattaches `<src>` as a sub-commit of the commit at `<dest>`, at that exact rank, always inheriting `<dest>`'s Stack Set (which may be unset — the attachment sits dormant until `<dest>` itself is assigned, at which point it picks up the assignment via the cascading rule above). Physically repositions `<src>` to sit correctly among `<dest>`'s existing sub-commits by rank order (insert immediately after the existing sibling with the largest rank less than `<src>`'s new one, or after `<dest>` itself if none) — this is how reordering siblings works (`move 0.1:0.9`). Refused if `<dest>` is itself a sub-commit (no 3-level nesting), if `<dest> == <src>`, or if `<src>` is a top-level commit that already has its own sub-commit(s) (attaching it elsewhere would orphan them — relocate its sub-commits first).
+    - A sub-commit whose parent reference doesn't resolve to any tracked commit (e.g. the parent was amended/dropped outside git-sd) is treated as unassigned and excluded from grouping, not an error — consistent with the tool's general tolerance of stale metadata elsewhere (e.g. `status`).
+    - Content-aware: a reorder whose commits' content depends on one another is detected as a conflict rather than silently dropping a change.
+- **Conflict Resolution (Interactive):** If a conflict occurs during a move, the tool stops and leaves a standard `git rebase` in progress for the user to resolve with plain git. Either way out leaves the repo and `git sd` metadata consistent:
+    - `git rebase --continue` (after resolving): the commits end up in the new order and the move's sub-commit attachment (if any) is recorded, so `git sd status` shows the move as if it had succeeded.
+    - `git rebase --abort`: the branch is exactly as it was before the command, and the metadata is unchanged — no attachment is recorded.
+    - While the rebase is in progress, `git sd status` says so, and other `git sd` commands that change state refuse to run until it is finished or aborted.
+    - If the user rewrites or drops commits during the rebase, the attachment is not recorded and a warning says so.
+    - A validation failure (bad address, 3-level nesting, `dest==src`) leaves the repo untouched instead. (`rebase` behaves the same way — see its section.)
+- **Tracking:** Like `assign`, `move` tracks any untracked commits in range (assigns a `git-sd-id`) before acting, so the moved commit always has an id to record its new state against.
+- **Output:** Single line confirming the move (unless conflict occurs).
 
-### 6. `git sd cleanup [<set-name> | --all]`
-- **Description:** Removes local metadata and generated branches for merged Stack Sets.
+### 5. `git sd fixup <target-index>`
+- **Description:** Sugar for the common PR-feedback workflow — always attaches the current `HEAD` commit as the next sub-commit of `<target-index>`'s PR. Equivalent to `git sd move <index of HEAD>:<target-index>.<rank>`, with `<rank>` computed automatically as the next rank after `<target-index>`'s current highest sub-commit rank. Use `move` directly for anything more specific (a different source, an explicit rank, reordering).
+- **Auto-rank:** each `fixup` against the same target picks the next rank after the highest one already there — a simple sequence in the common case (`0.1`, `0.2`, `0.3`, ...). After 9 fixups on one PR (`0.9`), the next one continues as `0.91`, `0.92`, ... rather than colliding — see DESIGN.md for the exact algorithm. This ceiling only matters as a theoretical limit; no realistic PR-feedback cycle approaches it.
+- **Behavior:** Refused if `<target-index>` isn't assigned to a Stack Set, if `<target-index>` is `HEAD` itself, or if `HEAD` is a top-level commit that already has its own sub-commit(s) (attaching it elsewhere would orphan them — use `move` for that manual case).
+- **Tracking:** Like `assign`/`move`, `fixup` tracks any untracked commits in range first — `HEAD` never needs to be `track`ed or `assign`ed before running `fixup`, so a fresh fix commit can be attached in one step.
+- **Output:** Single line naming the resulting `<target-index>.<rank>` label (unless conflict occurs, same as `move`).
+
+### 6. `git sd sync [<set-name> | --all]`
+- **Description:** Synchronizes local branch state with GitHub PRs.
+- **Behavior:** Updates PR branches, metadata, and descriptions. Re-syncing an unchanged stack changes nothing on GitHub: a PR whose content, message and base are unchanged is not re-pushed and its title, body and base are not re-sent, even after git-sd has rewritten the local commits (e.g. by `move` or `rebase`). Only PRs whose content, message, or base actually changed get new commits or edits on GitHub. A title or body edited by hand on GitHub is therefore not overwritten until the local commit message (or the PR's base) changes.
+- **Output:** What changed, one line per PR created or updated: `Created PR #<n>  [<set>]  <title>  <url>` or `Updated PR #<n>  [<set>]  <title>  <url>` (an updated PR is one whose branch, title, body or base changed), then `<n> PR(s) unchanged.` if any were left as they were, then `Deleted <n> finished branch(es).` if the remote branches of retired commits were deleted (one count line; a branch that could not be deleted, or that an open PR is still based on, is kept and reported by its own `Warning:` line and retried next sync), then `Stack Set '<name>' fully finished; dissolved.` for each Stack Set removed because all its commits are gone, then the closing line `Sync completed.` Merged or closed PRs and groups that failed are not counted. Warnings and errors print as they occur; there are no progress lines. A Stack is registered only once every PR of its Stack Set exists: if a group's PR could not be created, the Stack is left as it was and the missing PR is the one error reported (GitHub would refuse the incomplete chain with a second, redundant error); the next `sync` creates the PR and registers the Stack. A failure of one group (its branch could not be built or pushed, its PR could not be created or updated) or step (a Stack could not be registered, the metadata could not be saved) prints `Error: could not <action>: <reason>`, does not stop the rest of the sync, and makes the closing line `Sync completed with <n> error(s).` and the exit status 1; warnings do not affect the exit status. A problem that makes every later step pointless (no usable `gh`, no metadata, no base branch) stops the sync at once with exit status 1.
+
+### 7. `git sd merge [<set-name>] [--upto <index>] | --all`
+- **Description:** Merges PRs in a stack via GitHub's native async stack-merge API.
+- **Safeguards:** Approval/CI enforcement is delegated entirely to GitHub — whatever branch protection is configured on the base branch is what gates the merge. git-sd does not check review or CI status itself; if a submitted merge doesn't satisfy branch protection, GitHub's own rejection is surfaced as the error.
+- **`--upto <index>`:** Merge only the **bottom prefix** of the set — the PRs whose top-level commit index (as shown in `git sd status`) is `<= index` — instead of the whole stack. Every group at or below the target must already have a PR (i.e. be synced); git-sd submits just the top-most PR in that range, and GitHub's async merge cascades everything below it. Useful for landing the ready base of a stack incrementally. Cannot be combined with `--all`.
+- **Behavior:**
+    - Identifies the top-most PR at or below `--upto`'s cap (or the top of the stack if `--upto` is omitted).
+    - Submits that PR to GitHub's async stack-merge API, which merges every PR in the stack up to and including it — each landing on the base branch as its own commit, with every PR above it server-side rebased onto the new base. This is atomic: if any PR in the range fails its branch-protection gate, nothing in the range is merged.
+    - **GitHub only:** `merge` never touches the local branch or working tree (so it works with uncommitted changes). After a successful merge it prints a hint to run `git sd rebase`, which verifies each merged PR's content landed, drops those commits locally, and retires their tracking; remote branches of the merged PRs are then deleted by the next `sync`.
+
+### 8. `git sd rebase [--rollback [<n>] | --list]`
+- **Description:** Reconciles the local branch with the updated base branch after PRs have landed, however they were merged — see "Reconciling with Upstream" above. Strictly local: never pushes, edits a PR, or deletes a remote branch.
+- **Behavior:**
+    - Refuses to run with uncommitted changes.
+    - Fetches the base branch; each group whose PR is `MERGED` is classified (dropped, kept as a follow-up commit, or a conflict) as described in "Reconciling with Upstream". If a merged PR's merge commit is not on the base branch, or its group cannot be replayed to compare, the command aborts before anything is changed.
+    - Before changing anything, records a **backup**: the current `HEAD` and a full copy of the metadata. Backups form a stack (newest last, at most 10 kept).
+    - Rebuilds the remaining commits onto the updated base branch, then retires finished commits as described above. A commit whose change is already on the base is dropped automatically and counts as landed.
+    - **Conflict handling:** if a remaining commit conflicts with the updated base, the tool stops and leaves a standard `git rebase` in progress, naming the conflicting commit (and its PR) and files, and exits non-zero. Either way out leaves the repo and `git sd` metadata consistent: `git rebase --continue` (after resolving) finishes the rebase and the landed and closed PRs are then retired; `git rebase --skip` drops that commit and treats it as landed; `git rebase --abort` restores the branch exactly as it was and discards the backup just taken. While the rebase is in progress, `git sd status` says so and other state-changing `git sd` commands refuse to run. If a dropped or skipped commit's PR is still open, its tracking and remote branch are left alone and a warning names the PR.
+    - If nothing has landed and the base hasn't moved, does nothing and records no backup.
+- **`--rollback [<n>]`:** restores backup `<n>` (1 = most recent, the default): resets the branch to its recorded `HEAD` and restores the metadata snapshot together (never one without the other), then removes that backup. Older backups remain available. Refuses to run with uncommitted changes.
+- **`--list`:** prints the available backups, most recent first (number, timestamp, short hash).
+- **Output:** One summary line on success (e.g. "Rebased onto origin/main; dropped 2 landed PR(s)."), preceded by one line per follow-up commit kept (naming the PR it came from and a short change summary).
 
 ## Future Considerations
-- Transitioning from `gh` to direct GitHub API interaction.
 - Advanced conflict resolution within stacks.
