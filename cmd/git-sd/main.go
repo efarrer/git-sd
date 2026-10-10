@@ -13,6 +13,16 @@ func main() {
 
 	command := os.Args[1]
 	switch command {
+	case "track", "status", "assign", "sync", "move", "fixup", "merge", "rebase":
+		if reconcilePending() {
+			if command != "status" {
+				fmt.Printf("Error: %s\n", pendingInProgressMsg)
+				os.Exit(1)
+			}
+			fmt.Printf("Note: %s.\n", pendingInProgressMsg)
+		}
+	}
+	switch command {
 	case "track":
 		runTrack(os.Args[2:])
 	case "status":
@@ -21,6 +31,12 @@ func main() {
 		runAssign(os.Args[2:])
 	case "sync":
 		runSync(os.Args[2:])
+	case "move":
+		runMove(os.Args[2:])
+	case "fixup":
+		runFixup(os.Args[2:])
+	case "rebase":
+		runRebase(os.Args[2:])
 	case "help", "--help", "-h":
 		showUsage()
 	case "--agent":
