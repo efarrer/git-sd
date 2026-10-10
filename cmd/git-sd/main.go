@@ -39,6 +39,8 @@ func main() {
 		runMerge(os.Args[2:])
 	case "rebase":
 		runRebase(os.Args[2:])
+	case "watch":
+		runWatch(os.Args[2:])
 	case "help", "--help", "-h":
 		showUsage()
 	case "--agent":
@@ -68,6 +70,8 @@ Commands:
               branch (local only; backed up, auto-rolls back on conflict)
                 Options: --rollback [<n>] (restore backup n, 1 = newest),
                 --list (show backups)
+  watch       Watch the PRs' GitHub state and notify when it changes (runs
+              until you stop it with Ctrl-C; read-only)
 
 Options:
   --help      Show this help message
@@ -79,6 +83,10 @@ Configuration (via git config):
                                      (Default: Icon,Status,Index,Stack Set,git-sd-id,Hash,Message,PR)
   sd.status.color [true|false]       Color the Status word (Default: true; terminal only,
                                      off if NO_COLOR is set or TERM=dumb)
+  sd.watch.notify-command [string]   Shell command run for each change 'git sd watch' sees
+                                     (details in GIT_SD_* environment variables; see SPEC.md)
+  sd.watch.min-interval [duration]   Fastest 'git sd watch' poll (Default: 5s)
+  sd.watch.max-interval [duration]   Slowest poll while nothing changes (Default: 60s)
   sd.base-branch [string]            Upstream branch to target instead of main/master, as
                                      "<remote>/<branch>". The remote must be one of this
                                      repo's configured git remotes (any remote works, not

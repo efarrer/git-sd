@@ -344,6 +344,43 @@ rebase
   Examples:
     git sd rebase               after PRs were merged in GitHub's UI
     git sd rebase --list
+
+watch
+  Usage:       git sd watch
+  Arguments:   none
+  Behavior:    Long-running and READ-ONLY: it never changes the branch, the
+               metadata or GitHub. Polls GitHub for the PRs of the current
+               branch (the same live lookup 'status' uses) until stopped with
+               Ctrl-C, and reports every change of a PR's GitHub state (CI
+               running -> CI failed/passed, Review -> Approved, Conflict,
+               Merged, Closed, ...). Local-only states and CI progress are not
+               changes. Poll interval: 'sd.watch.min-interval' (5s) after a
+               change, doubling while nothing changes up to
+               'sd.watch.max-interval' (60s; 20s while CI is running).
+  Output:      On a terminal: a table redrawn in place plus recent changes
+               and a footer. Otherwise: the table once, then one line per
+               event: "<HH:MM:SS>  <set> <pos>/<size>  PR #<n>  <from> -> <to>
+               <title>", plus
+               "Now watching PR #<n>" for a PR seen for the first time,
+               "Cannot reach GitHub (...); still watching, will keep retrying."
+               after 3 failed polls in a row, and "Back online.". Ends with
+               "Stopped watching." (exit 0) on Ctrl-C/SIGTERM.
+  Notify:      Terminal bell once per cycle with changes (terminal only), and
+               'sd.watch.notify-command' (run with sh -c per change) with the
+               environment GIT_SD_TITLE (short: "feat-a 3/5: Approved"),
+               GIT_SD_MESSAGE (a sentence naming the PR: "CI passed on PR 3
+               of 5 in feat-a (#120), now Approved: <title>"), GIT_SD_EVENT
+               (ci-running, ci-passed, ci-failed, approved,
+               changes-requested, conflict, merged, closed, draft,
+               ready-for-review, state-changed, offline), GIT_SD_STACK_SET,
+               GIT_SD_POSITION, GIT_SD_SET_SIZE, GIT_SD_PR_NUMBER,
+               GIT_SD_PR_URL, GIT_SD_PR_TITLE, GIT_SD_FROM and GIT_SD_TO.
+  Errors:      A problem on the first poll (no usable gh, no base branch, no
+               metadata, invalid interval settings) prints "Error: ..." and
+               exits 1. Later GitHub outages are retried, not fatal.
+  Examples:
+    git sd watch
+    git config sd.watch.notify-command 'notify-send "$GIT_SD_TITLE" "$GIT_SD_MESSAGE"'
     git sd rebase --rollback    undo the most recent rebase
     git sd rebase --rollback 2
 
@@ -371,6 +408,9 @@ CONFIGURATION (git config; see 'git config' for project scope, 'git config
   sd.status.legend    [true|false]  default false
   sd.status.columns   [string]      default "Icon,Status,Index,Stack Set,git-sd-id,Hash,Message,PR"
   sd.status.color     [true|false]  default true (terminal only; NO_COLOR/TERM=dumb turn it off)
+  sd.watch.notify-command [string]  default none (run per change by 'git sd watch')
+  sd.watch.min-interval   [duration] default 5s (number of seconds, or e.g. 300ms)
+  sd.watch.max-interval   [duration] default 60s
   sd.base-branch      [string]      "<remote>/<branch>"; <remote> must be a
                                      configured git remote. If unset: the
                                      "origin" remote's main branch if origin

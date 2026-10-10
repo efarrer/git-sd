@@ -1,0 +1,580 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"git-sd/internal/git"
+	"git-sd/internal/github"
+	"git-sd/internal/metadata"
+	"git-sd/internal/ui"
+	"io"
+	"os"
+	"os/exec"
+	"os/signal"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+)
+
+const (
+	defaultWatchMinInterval = 5 * time.Second
+	defaultWatchMaxInterval = 60 * time.Second
+	// watchCIMaxInterval caps the wait while any PR has CI running: the one
+	// state that changes within seconds. Review states are human-paced.
+	watchCIMaxInterval = 20 * time.Second
+	// watchOutageAfter is how many failed polls in a row count as an outage.
+	watchOutageAfter   = 3
+	watchRecentEvents  = 8
+	watchNotifyTimeout = 10 * time.Second
+)
+
+// watchedPR is one PR the watcher follows, as of one poll.
+type watchedPR struct {
+	Number   int
+	URL      string
+	StackSet string
+	Title    string
+	Position int         // 1-based place among the groups of its Stack Set, in stack order
+	SetSize  int         // how many groups that Stack Set has
+	Marker   ui.MarkerID // the state GitHub reports; "" if it could not be read
+}
+
+// watchSnapshot is one poll of every watched PR.
+type watchSnapshot struct {
+	PRs       []watchedPR // in stack order
+	allFailed bool        // every lookup failed (GitHub or the network is unreachable)
+	err       error       // the first lookup error
+}
+
+// watchEvent is a PR whose GitHub-reported state changed between two polls.
+type watchEvent struct {
+	PR       watchedPR
+	From, To ui.MarkerID
+	Kind     string
+}
+
+// ---------------------------------------------------------------- settings
+
+// parseWatchDuration reads an interval setting: empty is the default, a bare
+// number is seconds, anything else is a Go duration ("300ms", "1m").
+func parseWatchDuration(name, value string, def time.Duration) (time.Duration, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return def, nil
+	}
+	if n, err := strconv.Atoi(value); err == nil {
+		if n > 0 {
+			return time.Duration(n) * time.Second, nil
+		}
+	} else if d, err := time.ParseDuration(value); err == nil && d > 0 {
+		return d, nil
+	}
+	return 0, fmt.Errorf("%s must be a positive number of seconds or a duration such as 5s or 300ms, got '%s'", name, value)
+}
+
+// watchIntervals reads and validates sd.watch.min-interval / max-interval.
+func watchIntervals(minValue, maxValue string) (minI, maxI time.Duration, err error) {
+	if minI, err = parseWatchDuration("sd.watch.min-interval", minValue, defaultWatchMinInterval); err != nil {
+		return 0, 0, err
+	}
+	if maxI, err = parseWatchDuration("sd.watch.max-interval", maxValue, defaultWatchMaxInterval); err != nil {
+		return 0, 0, err
+	}
+	if maxI < minI {
+		return 0, 0, fmt.Errorf("sd.watch.max-interval (%s) must not be shorter than sd.watch.min-interval (%s)", maxI, minI)
+	}
+	return minI, maxI, nil
+}
+
+// nextWatchInterval is how long to wait before the next poll: the minimum after
+// a change, otherwise double the last wait, up to the maximum (and up to
+// watchCIMaxInterval while any PR has CI running).
+func nextWatchInterval(current time.Duration, changed, ciRunning bool, minI, maxI time.Duration) time.Duration {
+	if changed {
+		return minI
+	}
+	limit := maxI
+	if ciRunning && limit > watchCIMaxInterval {
+		limit = watchCIMaxInterval
+	}
+	next := max(current*2, minI)
+	return min(next, limit)
+}
+
+// ---------------------------------------------------------------- events
+
+// eventKind names a transition for GIT_SD_EVENT.
+func eventKind(from, to ui.MarkerID) string {
+	switch to {
+	case ui.CIRunning:
+		return "ci-running"
+	case ui.CIFailed:
+		return "ci-failed"
+	case ui.Approved:
+		if from != ui.CIRunning {
+			return "approved"
+		}
+	case ui.Changes:
+		return "changes-requested"
+	case ui.Conflict:
+		return "conflict"
+	case ui.Merged:
+		return "merged"
+	case ui.Closed:
+		return "closed"
+	case ui.Draft:
+		return "draft"
+	case ui.Review:
+		if from == ui.Draft {
+			return "ready-for-review"
+		}
+	}
+	if from == ui.CIRunning {
+		return "ci-passed" // CI finished without failing, and the PR moved on
+	}
+	return "state-changed"
+}
+
+func markerWord(id ui.MarkerID) string {
+	if id == "" {
+		return "?"
+	}
+	return ui.MarkerFor(id).Word
+}
+
+// setLabel names a PR's place: "feat-a 3/5", or just the set when it has one PR.
+func setLabel(p watchedPR) string {
+	if p.SetSize > 1 && p.Position > 0 {
+		return fmt.Sprintf("%s %d/%d", p.StackSet, p.Position, p.SetSize)
+	}
+	return p.StackSet
+}
+
+// describeEvent is the one-line log entry for a change.
+func describeEvent(e watchEvent) string {
+	return fmt.Sprintf("%s  PR #%d  %s → %s  %s", setLabel(e.PR), e.PR.Number, markerWord(e.From), markerWord(e.To), e.PR.Title)
+}
+
+// who identifies a PR the way a person would say it: "PR 3 of 5 in feat-a
+// (#120)", or "the PR in feat-a (#120)" when the set has only one.
+func who(p watchedPR) string {
+	if p.SetSize > 1 && p.Position > 0 {
+		return fmt.Sprintf("PR %d of %d in %s (#%d)", p.Position, p.SetSize, p.StackSet, p.Number)
+	}
+	return fmt.Sprintf("the PR in %s (#%d)", p.StackSet, p.Number)
+}
+
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// eventHeadline is what happened, in a few words.
+func eventHeadline(e watchEvent) string {
+	switch e.Kind {
+	case "ci-running":
+		return "CI started"
+	case "ci-passed":
+		return "CI passed"
+	case "ci-failed":
+		return "CI failed"
+	case "approved":
+		return "Approved"
+	case "changes-requested":
+		return "Changes requested"
+	case "conflict":
+		return "Merge conflict"
+	case "merged":
+		return "Merged"
+	case "closed":
+		return "Closed"
+	case "draft":
+		return "Marked as draft"
+	case "ready-for-review":
+		return "Ready for review"
+	}
+	return markerWord(e.To)
+}
+
+// eventTitle is a short notification title: the set, the place in it and what
+// happened, e.g. "feat-a 3/5: Approved".
+func eventTitle(e watchEvent) string {
+	return setLabel(e.PR) + ": " + eventHeadline(e)
+}
+
+// eventMessage is a full sentence for the notification body that says which PR
+// changed and how, e.g. "CI passed on PR 3 of 5 in feat-a (#120), now Approved: <title>".
+func eventMessage(e watchEvent) string {
+	w, t := who(e.PR), e.PR.Title
+	switch e.Kind {
+	case "ci-running":
+		return fmt.Sprintf("CI started on %s: %s", w, t)
+	case "ci-passed":
+		return fmt.Sprintf("CI passed on %s, now %s: %s", w, markerWord(e.To), t)
+	case "ci-failed":
+		return fmt.Sprintf("CI failed on %s: %s", w, t)
+	case "approved":
+		return fmt.Sprintf("%s was approved: %s", capitalize(w), t)
+	case "changes-requested":
+		return fmt.Sprintf("Changes requested on %s: %s", w, t)
+	case "conflict":
+		return fmt.Sprintf("%s has a merge conflict: %s", capitalize(w), t)
+	case "merged":
+		return fmt.Sprintf("%s was merged: %s", capitalize(w), t)
+	case "closed":
+		return fmt.Sprintf("%s was closed: %s", capitalize(w), t)
+	case "draft":
+		return fmt.Sprintf("%s was marked as a draft: %s", capitalize(w), t)
+	case "ready-for-review":
+		return fmt.Sprintf("%s is ready for review: %s", capitalize(w), t)
+	}
+	return fmt.Sprintf("%s changed from %s to %s: %s", capitalize(w), markerWord(e.From), markerWord(e.To), t)
+}
+
+// carryForward gives a PR whose lookup failed this time (no marker) its last
+// known marker, so a failed lookup is never mistaken for a change.
+func carryForward(prev, cur []watchedPR) []watchedPR {
+	old := map[int]ui.MarkerID{}
+	for _, p := range prev {
+		old[p.Number] = p.Marker
+	}
+	out := make([]watchedPR, len(cur))
+	for i, p := range cur {
+		if p.Marker == "" {
+			p.Marker = old[p.Number]
+		}
+		out[i] = p
+	}
+	return out
+}
+
+// diffWatch returns the PRs present in both snapshots whose marker changed.
+func diffWatch(prev, cur []watchedPR) []watchEvent {
+	old := map[int]ui.MarkerID{}
+	for _, p := range prev {
+		old[p.Number] = p.Marker
+	}
+	var events []watchEvent
+	for _, p := range cur {
+		from, seen := old[p.Number]
+		if !seen || from == "" || p.Marker == "" || from == p.Marker {
+			continue
+		}
+		events = append(events, watchEvent{PR: p, From: from, To: p.Marker, Kind: eventKind(from, p.Marker)})
+	}
+	return events
+}
+
+// newWatchedPRs are the PRs in cur that prev did not have.
+func newWatchedPRs(prev, cur []watchedPR) []watchedPR {
+	seen := map[int]bool{}
+	for _, p := range prev {
+		seen[p.Number] = true
+	}
+	var out []watchedPR
+	for _, p := range cur {
+		if !seen[p.Number] {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// ---------------------------------------------------------------- notifying
+
+// notifier rings the bell (terminal only) and runs sd.watch.notify-command.
+type notifier struct {
+	command string
+	bell    io.Writer // nil unless output is a terminal
+	out     io.Writer // for the one warning about a failing command
+	run     func(command string, env []string) error
+	warned  bool
+}
+
+func (n *notifier) invoke(env []string) {
+	if n.command == "" || n.run == nil {
+		return
+	}
+	if err := n.run(n.command, env); err != nil && !n.warned {
+		n.warned = true
+		fmt.Fprintf(n.out, "Warning: sd.watch.notify-command failed: %v\n", err)
+	}
+}
+
+// notify rings the bell once and runs the command once per event.
+func (n *notifier) notify(events []watchEvent) {
+	if len(events) == 0 {
+		return
+	}
+	if n.bell != nil {
+		fmt.Fprint(n.bell, "\a")
+	}
+	for _, e := range events {
+		n.invoke([]string{
+			"GIT_SD_TITLE=" + eventTitle(e),
+			"GIT_SD_MESSAGE=" + eventMessage(e),
+			"GIT_SD_EVENT=" + e.Kind,
+			"GIT_SD_POSITION=" + strconv.Itoa(e.PR.Position),
+			"GIT_SD_SET_SIZE=" + strconv.Itoa(e.PR.SetSize),
+			"GIT_SD_PR_NUMBER=" + strconv.Itoa(e.PR.Number),
+			"GIT_SD_PR_URL=" + e.PR.URL,
+			"GIT_SD_PR_TITLE=" + e.PR.Title,
+			"GIT_SD_STACK_SET=" + e.PR.StackSet,
+			"GIT_SD_FROM=" + markerWord(e.From),
+			"GIT_SD_TO=" + markerWord(e.To),
+		})
+	}
+}
+
+// message sends a notification that is not about one PR (an outage).
+func (n *notifier) message(kind, text string) {
+	if n.bell != nil {
+		fmt.Fprint(n.bell, "\a")
+	}
+	n.invoke([]string{"GIT_SD_TITLE=git sd watch: " + kind, "GIT_SD_MESSAGE=" + text, "GIT_SD_EVENT=" + kind})
+}
+
+// runNotifyCommand runs the command through sh with the event environment.
+func runNotifyCommand(command string, env []string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), watchNotifyTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd.Env = append(os.Environ(), env...)
+	return cmd.Run()
+}
+
+// ---------------------------------------------------------------- the loop
+
+type watcher struct {
+	minInterval, maxInterval time.Duration
+	out                      io.Writer
+	tty                      bool
+	color                    bool
+	snapshot                 func() (watchSnapshot, error)
+	sleep                    func(ctx context.Context, d time.Duration) bool // false once ctx is done
+	now                      func() time.Time
+	notifier                 *notifier
+}
+
+func (w *watcher) stamp() string { return w.now().Format("15:04:05") }
+
+// table renders the watched PRs.
+func (w *watcher) table(prs []watchedPR) string {
+	rows := make([][]string, len(prs))
+	for i, p := range prs {
+		id := p.Marker
+		if id == "" {
+			id = ui.Unavailable
+		}
+		mk := ui.MarkerFor(id)
+		title := p.Title
+		if len(title) > 50 {
+			title = title[:47] + "..."
+		}
+		rows[i] = []string{mk.Icon, statusWord(mk, w.color), fmt.Sprintf("#%d", p.Number), p.StackSet, title}
+	}
+	return ui.FormatTable([]string{"", "Status", "PR", "Stack Set", "Title"}, rows)
+}
+
+// run polls until ctx is cancelled. An error on the first poll is returned;
+// later errors are retried.
+func (w *watcher) run(ctx context.Context) error {
+	interval := w.minInterval
+	var prev []watchedPR
+	var recent []string
+	have := false // a baseline has been taken
+	failures, outage := 0, false
+	var lastChecked string
+	say := func(line string) {
+		line = w.stamp() + "  " + line
+		if !w.tty {
+			fmt.Fprintln(w.out, line)
+			return
+		}
+		recent = append(recent, line)
+		if len(recent) > watchRecentEvents {
+			recent = recent[len(recent)-watchRecentEvents:]
+		}
+	}
+	for {
+		snap, err := w.snapshot()
+		changed := false
+		switch {
+		case err != nil && !have:
+			return err
+		case err != nil || snap.allFailed:
+			failures++
+			if failures == watchOutageAfter && !outage {
+				outage = true
+				reason := "no answer"
+				if err != nil {
+					reason = err.Error()
+				} else if snap.err != nil {
+					reason = snap.err.Error()
+				}
+				say("Cannot reach GitHub (" + strings.SplitN(reason, "\n", 2)[0] + "); still watching, will keep retrying.")
+				w.notifier.message("offline", "git sd watch cannot reach GitHub; it will keep retrying")
+			}
+		default:
+			if outage {
+				say("Back online.")
+				outage = false
+			}
+			failures = 0
+			cur := carryForward(prev, snap.PRs)
+			if !have {
+				have, changed = true, true // just started: poll again after the minimum
+				if len(cur) == 0 {
+					say("No PRs to watch yet; run 'git sd sync' to create them. Waiting.")
+				} else if !w.tty {
+					fmt.Fprint(w.out, w.table(cur))
+				}
+			} else {
+				events := diffWatch(prev, cur)
+				fresh := newWatchedPRs(prev, cur)
+				for _, p := range fresh {
+					say(fmt.Sprintf("Now watching PR #%d", p.Number))
+				}
+				for _, e := range events {
+					say(describeEvent(e))
+				}
+				changed = len(events) > 0 || len(fresh) > 0
+				w.notifier.notify(events)
+			}
+			prev = cur
+			lastChecked = w.stamp()
+		}
+		ciRunning := false
+		for _, p := range prev {
+			if p.Marker == ui.CIRunning {
+				ciRunning = true
+			}
+		}
+		interval = nextWatchInterval(interval, changed, ciRunning, w.minInterval, w.maxInterval)
+		if w.tty {
+			fmt.Fprint(w.out, "\x1b[H\x1b[2J")
+			if len(prev) > 0 {
+				fmt.Fprint(w.out, w.table(prev))
+			}
+			for _, line := range recent {
+				fmt.Fprintln(w.out, line)
+			}
+			state := fmt.Sprintf("watching %d PR(s) · checked %s", len(prev), lastChecked)
+			if outage {
+				state = "GitHub unreachable, retrying · last good check " + lastChecked
+			}
+			fmt.Fprintf(w.out, "\n%s · next check in %s · Ctrl-C to stop\n", state, interval.Round(time.Second))
+		}
+		if !w.sleep(ctx, interval) {
+			fmt.Fprintln(w.out, "Stopped watching.")
+			return nil
+		}
+	}
+}
+
+// sleepWall waits d, checking the wall clock every second so that after a
+// laptop wakes the next poll is immediate instead of up to a full interval late.
+func sleepWall(ctx context.Context, d time.Duration) bool {
+	deadline := time.Now().Round(0).Add(d)
+	for {
+		remaining := time.Until(deadline.Round(0))
+		remaining = deadline.Sub(time.Now().Round(0))
+		if remaining <= 0 {
+			return ctx.Err() == nil
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(min(remaining, time.Second)):
+		}
+	}
+}
+
+// ---------------------------------------------------------------- the command
+
+// takeWatchSnapshot polls GitHub once for every PR of the branch's groups. It
+// reads the metadata and never writes it.
+func takeWatchSnapshot() (watchSnapshot, error) {
+	_, _, since, err := git.ResolveBaseBranch()
+	if err != nil {
+		return watchSnapshot{}, err
+	}
+	commits, err := git.GetCommitsInRange(since)
+	if err != nil {
+		return watchSnapshot{}, fmt.Errorf("could not read the commits: %w", err)
+	}
+	m, err := metadata.Load()
+	if err != nil {
+		return watchSnapshot{}, fmt.Errorf("could not load the metadata: %w", err)
+	}
+	var snap watchSnapshot
+	var numbers []int
+	groups := GroupCommits(commits, m)
+	setSize := map[string]int{} // every group counts, so the place matches the order status shows
+	for _, g := range groups {
+		setSize[g.StackSet]++
+	}
+	placed := map[string]int{}
+	for _, g := range groups {
+		placed[g.StackSet]++
+		cm := m.Commits[g.TopLevelID]
+		if cm.PRNumber == 0 {
+			continue
+		}
+		title, _, _ := strings.Cut(g.Commits[0].Message, "\n")
+		snap.PRs = append(snap.PRs, watchedPR{Number: cm.PRNumber, URL: cm.PRURL, StackSet: g.StackSet, Title: title,
+			Position: placed[g.StackSet], SetSize: setSize[g.StackSet]})
+		numbers = append(numbers, cm.PRNumber)
+	}
+	lookups := fetchPRInfos(numbers)
+	failed := 0
+	for i := range snap.PRs {
+		lk, ok := lookups[snap.PRs[i].Number]
+		if !ok || lk.err != nil || lk.info == nil {
+			failed++
+			if snap.err == nil && ok {
+				snap.err = lk.err
+			}
+			continue
+		}
+		snap.PRs[i].Marker = classifyPR(lk.info)
+	}
+	snap.allFailed = len(numbers) > 0 && failed == len(numbers)
+	if snap.allFailed && github.IsEnvError(snap.err) {
+		return snap, snap.err // no usable gh: fatal on the first poll, an outage later
+	}
+	return snap, nil
+}
+
+func runWatch(args []string) {
+	if len(args) > 0 {
+		fmt.Printf("Error: watch takes no arguments, got '%s'\n", args[0])
+		exitCleanly(1)
+	}
+	minI, maxI, err := watchIntervals(
+		git.ConfigGetWithDefault("sd.watch.min-interval", ""),
+		git.ConfigGetWithDefault("sd.watch.max-interval", ""))
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		exitCleanly(1)
+	}
+	tty := stdoutIsTerminal()
+	n := &notifier{command: strings.TrimSpace(git.ConfigGetWithDefault("sd.watch.notify-command", "")), out: os.Stdout, run: runNotifyCommand}
+	if tty {
+		n.bell = os.Stdout
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	w := &watcher{
+		minInterval: minI, maxInterval: maxI, out: os.Stdout, tty: tty,
+		color:    ui.ColorEnabled(git.ConfigGetWithDefault("sd.status.color", "true"), os.Getenv, tty),
+		snapshot: takeWatchSnapshot, sleep: sleepWall, now: time.Now, notifier: n,
+	}
+	if err := w.run(ctx); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		exitCleanly(1)
+	}
+}
