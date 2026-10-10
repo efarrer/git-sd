@@ -35,6 +35,8 @@ func main() {
 		runMove(os.Args[2:])
 	case "fixup":
 		runFixup(os.Args[2:])
+	case "merge":
+		runMerge(os.Args[2:])
 	case "rebase":
 		runRebase(os.Args[2:])
 	case "help", "--help", "-h":
