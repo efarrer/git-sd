@@ -26,6 +26,14 @@ func TestSDWatchReportsChangesAndSurvivesAnOutage(t *testing.T) {
 	if o, err := e.sd("sync"); err != nil { // two PRs; the fake reports them open and unreviewed (Review)
 		t.Fatalf("sync: %v\n%s", err, o)
 	}
+	// A sub-commit on the first PR, so the table has a row that has no PR of its own.
+	e.commitFile("Fix_A.txt", "Fix for A")
+	if o, err := e.sd("track"); err != nil {
+		t.Fatalf("track: %v\n%s", err, o)
+	}
+	if o, err := e.sd("fixup", "0"); err != nil {
+		t.Fatalf("fixup: %v\n%s", err, o)
+	}
 	st, err := e.sd("status")
 	if err != nil {
 		t.Fatalf("status: %v\n%s", err, st)
@@ -35,6 +43,7 @@ func TestSDWatchReportsChangesAndSurvivesAnOutage(t *testing.T) {
 		t.Fatalf("expected 2 PRs, got %v", prs)
 	}
 	second := prs[1]
+	statusTable := st // what `git sd status` prints right now; watch must open with exactly this
 	notified := filepath.Join(e.root, "notified.log")
 	e.git(e.repo, "config", "sd.watch.min-interval", "100ms")
 	e.git(e.repo, "config", "sd.watch.max-interval", "300ms")
@@ -82,7 +91,13 @@ func TestSDWatchReportsChangesAndSurvivesAnOutage(t *testing.T) {
 	}
 
 	// Baseline: the table, no events.
-	waitFor(outPath, "#"+second, "the baseline table")
+	waitFor(outPath, "/pull/"+second, "the baseline table")
+	if !strings.Contains(statusTable, "└─ Fix for A") || !strings.Contains(statusTable, "Unsynced") {
+		t.Fatalf("test premise: status shows the sub-commit and its Unsynced marker:\n%s", statusTable)
+	}
+	if got := read(outPath); !strings.HasPrefix(got, statusTable) {
+		t.Fatalf("watch must open with exactly the table status prints, sub-commit row included.\n--- status ---\n%s\n--- watch ---\n%s", statusTable, got)
+	}
 	if strings.Contains(read(outPath), "→") {
 		t.Fatalf("the baseline must not report changes:\n%s", read(outPath))
 	}
@@ -143,6 +158,11 @@ func TestSDWatchRejectsBadSettingsAndArguments(t *testing.T) {
 	t.Parallel()
 	e := newBatchPushEnv(t)
 	e.commitFile("Commit_A.txt", "Commit A")
+	e.git(e.repo, "config", "sd.status.columns", "Colour")
+	if out, err := e.sd("watch"); err == nil || !strings.Contains(out, "unknown status column 'Colour'") {
+		t.Errorf("watch uses status's columns, so a bad column is the same error: %v\n%s", err, out)
+	}
+	e.git(e.repo, "config", "--unset", "sd.status.columns")
 	if out, err := e.sd("watch", "extra"); err == nil || !strings.Contains(out, "watch takes no arguments") {
 		t.Errorf("arguments are refused: %v\n%s", err, out)
 	}

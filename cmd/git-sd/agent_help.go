@@ -357,8 +357,9 @@ watch
                changes. Poll interval: 'sd.watch.min-interval' (5s) after a
                change, doubling while nothing changes up to
                'sd.watch.max-interval' (60s; 20s while CI is running).
-  Output:      On a terminal: a table redrawn in place plus recent changes
-               and a footer. Otherwise: the table once, then one line per
+  Output:      On a terminal: the same table 'status' prints, redrawn in
+               place, plus recent changes and a footer. Otherwise: that
+               table once, then one line per
                event: "<HH:MM:SS>  <set> <pos>/<size>  PR #<n>  <from> -> <to>
                <title>", plus
                "Now watching PR #<n>" for a PR seen for the first time,

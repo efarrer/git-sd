@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"git-sd/internal/ui"
 	"os"
 	"path/filepath"
@@ -175,7 +176,19 @@ func harness(steps []watchStep, tty bool) (w *watcher, out *bytes.Buffer, bell *
 	return
 }
 
-func snapOf(prs ...watchedPR) watchSnapshot { return watchSnapshot{PRs: prs} }
+// snapOf is a snapshot whose table has one row per PR (the real one is status's).
+func snapOf(prs ...watchedPR) watchSnapshot {
+	s := watchSnapshot{PRs: prs, Header: []string{"", "Status", "PR"}}
+	for _, p := range prs {
+		id := p.Marker
+		if id == "" {
+			id = ui.Unavailable
+		}
+		mk := ui.MarkerFor(id)
+		s.Rows = append(s.Rows, []string{mk.Icon, mk.Word, fmt.Sprintf("#%d", p.Number)})
+	}
+	return s
+}
 
 func TestWatcherReportsChangesAndBacksOff(t *testing.T) {
 	w, out, _, sleeps, rec := harness([]watchStep{
@@ -242,6 +255,36 @@ func TestEventMessagesIdentifyThePR(t *testing.T) {
 		if got := eventMessage(c.e); got != c.message {
 			t.Errorf("%s: message %q, want %q", c.name, got, c.message)
 		}
+	}
+}
+
+func TestWatcherOpensWithTheTableStatusPrints(t *testing.T) {
+	first := snapOf(pr(1, ui.Review), pr(2, ui.CIRunning))
+	w, out, _, _, _ := harness([]watchStep{{snap: first}}, false)
+	if err := w.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if want := ui.FormatTable(first.Header, first.Rows); !strings.HasPrefix(out.String(), want) {
+		t.Errorf("the baseline must be exactly the table status prints:\n--- want ---\n%s\n--- got ---\n%s", want, out.String())
+	}
+
+	// With no commits in range, status prints a note instead of a table; so does watch.
+	empty := watchSnapshot{Note: "No local commits found since origin/main."}
+	w, out, _, _, _ = harness([]watchStep{{snap: empty}}, false)
+	if err := w.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out.String(), "No local commits found since origin/main.\n") {
+		t.Errorf("a branch with no commits shows status's note:\n%s", out.String())
+	}
+
+	// On a terminal the same table is what is redrawn.
+	w, out, _, _, _ = harness([]watchStep{{snap: first}}, true)
+	if err := w.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), ui.FormatTable(first.Header, first.Rows)) {
+		t.Errorf("the screen shows status's table:\n%q", out.String())
 	}
 }
 

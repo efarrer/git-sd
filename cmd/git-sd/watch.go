@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"git-sd/internal/git"
 	"git-sd/internal/github"
-	"git-sd/internal/metadata"
 	"git-sd/internal/ui"
 	"io"
 	"os"
@@ -42,6 +41,9 @@ type watchedPR struct {
 
 // watchSnapshot is one poll of every watched PR.
 type watchSnapshot struct {
+	Header    []string // the table status would print for this moment
+	Rows      [][]string
+	Note      string      // printed instead of the table (no commits in range)
 	PRs       []watchedPR // in stack order
 	allFailed bool        // every lookup failed (GitHub or the network is unreachable)
 	err       error       // the first lookup error
@@ -352,7 +354,6 @@ type watcher struct {
 	minInterval, maxInterval time.Duration
 	out                      io.Writer
 	tty                      bool
-	color                    bool
 	snapshot                 func() (watchSnapshot, error)
 	sleep                    func(ctx context.Context, d time.Duration) bool // false once ctx is done
 	now                      func() time.Time
@@ -361,22 +362,13 @@ type watcher struct {
 
 func (w *watcher) stamp() string { return w.now().Format("15:04:05") }
 
-// table renders the watched PRs.
-func (w *watcher) table(prs []watchedPR) string {
-	rows := make([][]string, len(prs))
-	for i, p := range prs {
-		id := p.Marker
-		if id == "" {
-			id = ui.Unavailable
-		}
-		mk := ui.MarkerFor(id)
-		title := p.Title
-		if len(title) > 50 {
-			title = title[:47] + "..."
-		}
-		rows[i] = []string{mk.Icon, statusWord(mk, w.color), fmt.Sprintf("#%d", p.Number), p.StackSet, title}
+// render is what status would print for this snapshot: its table, or the
+// note when there are no commits.
+func (w *watcher) render(snap watchSnapshot) string {
+	if snap.Note != "" {
+		return snap.Note + "\n"
 	}
-	return ui.FormatTable([]string{"", "Status", "PR", "Stack Set", "Title"}, rows)
+	return ui.FormatTable(snap.Header, snap.Rows)
 }
 
 // run polls until ctx is cancelled. An error on the first poll is returned;
@@ -385,7 +377,8 @@ func (w *watcher) run(ctx context.Context) error {
 	interval := w.minInterval
 	var prev []watchedPR
 	var recent []string
-	have := false // a baseline has been taken
+	var latest watchSnapshot // the last good snapshot: what is on screen
+	have := false            // a baseline has been taken
 	failures, outage := 0, false
 	var lastChecked string
 	say := func(line string) {
@@ -427,10 +420,11 @@ func (w *watcher) run(ctx context.Context) error {
 			cur := carryForward(prev, snap.PRs)
 			if !have {
 				have, changed = true, true // just started: poll again after the minimum
+				if !w.tty {
+					fmt.Fprint(w.out, w.render(snap))
+				}
 				if len(cur) == 0 {
 					say("No PRs to watch yet; run 'git sd sync' to create them. Waiting.")
-				} else if !w.tty {
-					fmt.Fprint(w.out, w.table(cur))
 				}
 			} else {
 				events := diffWatch(prev, cur)
@@ -444,7 +438,7 @@ func (w *watcher) run(ctx context.Context) error {
 				changed = len(events) > 0 || len(fresh) > 0
 				w.notifier.notify(events)
 			}
-			prev = cur
+			prev, latest = cur, snap
 			lastChecked = w.stamp()
 		}
 		ciRunning := false
@@ -456,9 +450,7 @@ func (w *watcher) run(ctx context.Context) error {
 		interval = nextWatchInterval(interval, changed, ciRunning, w.minInterval, w.maxInterval)
 		if w.tty {
 			fmt.Fprint(w.out, "\x1b[H\x1b[2J")
-			if len(prev) > 0 {
-				fmt.Fprint(w.out, w.table(prev))
-			}
+			fmt.Fprint(w.out, w.render(latest))
 			for _, line := range recent {
 				fmt.Fprintln(w.out, line)
 			}
@@ -495,54 +487,18 @@ func sleepWall(ctx context.Context, d time.Duration) bool {
 
 // ---------------------------------------------------------------- the command
 
-// takeWatchSnapshot polls GitHub once for every PR of the branch's groups. It
-// reads the metadata and never writes it.
-func takeWatchSnapshot() (watchSnapshot, error) {
-	_, _, since, err := git.ResolveBaseBranch()
+// takeWatchSnapshot builds the same view status prints (read-only: no index
+// refresh, no save) and takes the watched PRs from it.
+func takeWatchSnapshot(columns []string, color bool) (watchSnapshot, error) {
+	view, err := buildStatusView(statusViewOptions{Columns: columns, Color: color, Op: activeOperation()})
 	if err != nil {
-		return watchSnapshot{}, err
+		return watchSnapshot{}, err // its text is the cause; the "Error:" prefix belongs to the caller
 	}
-	commits, err := git.GetCommitsInRange(since)
-	if err != nil {
-		return watchSnapshot{}, fmt.Errorf("could not read the commits: %w", err)
+	snap := watchSnapshot{PRs: view.PRs, Header: view.Header, Rows: view.Rows, err: view.FirstLookupErr}
+	if view.NoCommits {
+		snap.Note = fmt.Sprintf("No local commits found since %s.", view.BaseBranch)
 	}
-	m, err := metadata.Load()
-	if err != nil {
-		return watchSnapshot{}, fmt.Errorf("could not load the metadata: %w", err)
-	}
-	var snap watchSnapshot
-	var numbers []int
-	groups := GroupCommits(commits, m)
-	setSize := map[string]int{} // every group counts, so the place matches the order status shows
-	for _, g := range groups {
-		setSize[g.StackSet]++
-	}
-	placed := map[string]int{}
-	for _, g := range groups {
-		placed[g.StackSet]++
-		cm := m.Commits[g.TopLevelID]
-		if cm.PRNumber == 0 {
-			continue
-		}
-		title, _, _ := strings.Cut(g.Commits[0].Message, "\n")
-		snap.PRs = append(snap.PRs, watchedPR{Number: cm.PRNumber, URL: cm.PRURL, StackSet: g.StackSet, Title: title,
-			Position: placed[g.StackSet], SetSize: setSize[g.StackSet]})
-		numbers = append(numbers, cm.PRNumber)
-	}
-	lookups := fetchPRInfos(numbers)
-	failed := 0
-	for i := range snap.PRs {
-		lk, ok := lookups[snap.PRs[i].Number]
-		if !ok || lk.err != nil || lk.info == nil {
-			failed++
-			if snap.err == nil && ok {
-				snap.err = lk.err
-			}
-			continue
-		}
-		snap.PRs[i].Marker = classifyPR(lk.info)
-	}
-	snap.allFailed = len(numbers) > 0 && failed == len(numbers)
+	snap.allFailed = view.LookupsTotal > 0 && view.LookupsFailed == view.LookupsTotal
 	if snap.allFailed && github.IsEnvError(snap.err) {
 		return snap, snap.err // no usable gh: fatal on the first poll, an outage later
 	}
@@ -552,6 +508,11 @@ func takeWatchSnapshot() (watchSnapshot, error) {
 func runWatch(args []string) {
 	if len(args) > 0 {
 		fmt.Printf("Error: watch takes no arguments, got '%s'\n", args[0])
+		exitCleanly(1)
+	}
+	columns, err := statusColumns(git.ConfigGetWithDefault("sd.status.columns", defaultStatusColumns))
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
 		exitCleanly(1)
 	}
 	minI, maxI, err := watchIntervals(
@@ -568,10 +529,11 @@ func runWatch(args []string) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	color := ui.ColorEnabled(git.ConfigGetWithDefault("sd.status.color", "true"), os.Getenv, tty)
 	w := &watcher{
 		minInterval: minI, maxInterval: maxI, out: os.Stdout, tty: tty,
-		color:    ui.ColorEnabled(git.ConfigGetWithDefault("sd.status.color", "true"), os.Getenv, tty),
-		snapshot: takeWatchSnapshot, sleep: sleepWall, now: time.Now, notifier: n,
+		snapshot: func() (watchSnapshot, error) { return takeWatchSnapshot(columns, color) },
+		sleep:    sleepWall, now: time.Now, notifier: n,
 	}
 	if err := w.run(ctx); err != nil {
 		fmt.Printf("Error: %v\n", err)
