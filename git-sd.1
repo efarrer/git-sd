@@ -208,6 +208,23 @@ together.
 .B --list
 List the available backups, most recent first.
 .RE
+.TP
+.B watch
+Follow the GitHub state of the PRs on the current branch until stopped with
+Ctrl-C, and report every change (CI running, CI failed or passed, approved,
+conflict, merged, closed) as it happens: on a terminal the screen is redrawn
+in place and the bell rings; otherwise one line per change is printed. It is
+read-only. It polls at
+.B sd.watch.min-interval
+after a change and backs off up to
+.B sd.watch.max-interval
+while nothing changes (20 seconds at most while CI is running). A change also
+runs
+.B sd.watch.notify-command
+if set, with the details in
+.B GIT_SD_*
+environment variables, so it can show a desktop notification. GitHub being
+unreachable is retried and announced, not fatal.
 .SH OPTIONS
 .TP
 .B --help
@@ -246,6 +263,27 @@ is set or
 .B TERM
 is
 .BR dumb .
+.TP
+.B sd.watch.notify-command
+[string] Shell command run by
+.B watch
+for each change, with the set, the PR's place in it and the new state in
+.B GIT_SD_TITLE
+and
+.B GIT_SD_MESSAGE
+(and more in other
+.B GIT_SD_*
+variables; see the SPEC). Default: none.
+.TP
+.B sd.watch.min-interval
+[duration] Fastest
+.B watch
+poll: seconds, or a duration such as 300ms. Default: 5s.
+.TP
+.B sd.watch.max-interval
+[duration] Slowest
+.B watch
+poll while nothing changes. Default: 60s.
 .TP
 .B sd.base-branch
 [string] Upstream branch to target, as "<remote>/<branch>";

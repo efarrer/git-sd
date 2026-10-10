@@ -25,6 +25,7 @@ without installing anything, since they're printed directly by the binary.
 4. **Address PR feedback:** Make the fix (it lands at `HEAD`), then `git sd fixup <target-index>` to attach it as the next sub-commit of that PR — no index/rank math required.
 5. **Merge:** Merge approved PRs in the stack on GitHub: `git sd merge feat-a` (your local branch is untouched).
 6. **Reconcile:** after PRs land (via `git sd merge` or GitHub's UI), `git sd rebase` drops the landed commits from your branch and retires their tracking; the next `git sd sync` deletes their remote branches. Safe to run at any point, even mid-stack, since a Stack Set can keep growing after a partial merge (see SPEC.md's "Living Stack Sets"). `git sd rebase --rollback` undoes it.
+7. **Watch (optional):** `git sd watch` follows your PRs on GitHub and tells you when one changes (CI finished or failed, approved, conflict, merged), with a bell and an optional desktop notification (`sd.watch.notify-command`). It is read-only and runs until you press Ctrl-C.
 
 ## Documentation Structure
 
