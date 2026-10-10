@@ -74,7 +74,10 @@ case "$1 $2" in
     sleep $(cat %[2]q.delay 2>/dev/null || echo 0.3)
     echo CREATE_END >> %[1]q
     base_of "$@" > %[2]q-base-$n; echo "https://github.com/o/r/pull/$n" ;;
-  "pr view") b=$(cat %[2]q-base-$3 2>/dev/null || echo main); echo '{"number":'"$3"',"url":"https://github.com/o/r/pull/'"$3"'","state":"OPEN","baseRefName":"'"$b"'"}' ;;
+  "pr view")
+    if [ -e %[2]q.pr-fail ]; then echo "GraphQL: simulated outage" >&2; exit 1; fi
+    if [ -f %[2]q-pr-$3.json ]; then cat %[2]q-pr-$3.json; exit 0; fi
+    b=$(cat %[2]q-base-$3 2>/dev/null || echo main); echo '{"number":'"$3"',"url":"https://github.com/o/r/pull/'"$3"'","state":"OPEN","baseRefName":"'"$b"'"}' ;;
   "pr edit")
     # like GitHub: any --base is rejected on a PR in a registered Stack
     if [ -n "$(base_of "$@")" ] && [ -e "$STACK" ] && grep -qx "$3" "$STACK"; then
