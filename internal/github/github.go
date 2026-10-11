@@ -67,7 +67,9 @@ func (d *DetailedPRInfo) CIStatus() CIStatus {
 			case "FAILURE", "TIMED_OUT", "STARTUP_FAILURE", "ACTION_REQUIRED":
 				return CIFailing
 			}
-			if e.Status != "" && e.Status != "COMPLETED" {
+			// WAITING is a job held at an approval gate (an environment review, a
+			// wait timer, a concurrency queue); nothing is executing, so it is not CI running.
+			if e.Status != "" && e.Status != "COMPLETED" && e.Status != "WAITING" {
 				running = true
 			}
 		case "StatusContext":
