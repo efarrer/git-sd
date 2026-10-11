@@ -2,6 +2,7 @@ package github
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -62,5 +63,46 @@ func TestCIStatus(t *testing.T) {
 		if got != c.want {
 			t.Errorf("%s: CIStatus = %d, want %d", c.name, got, c.want)
 		}
+	}
+}
+
+func TestCIProgress(t *testing.T) {
+	run := func(status, conclusion string) string {
+		return `{"__typename":"CheckRun","name":"build","status":"` + status + `","conclusion":"` + conclusion + `"}`
+	}
+	ctx := func(state string) string {
+		return `{"__typename":"StatusContext","context":"ci/legacy","state":"` + state + `"}`
+	}
+	list := func(entries ...string) json.RawMessage {
+		return json.RawMessage("[" + strings.Join(entries, ",") + "]")
+	}
+	cases := []struct {
+		name                    string
+		rollup                  json.RawMessage
+		finished, failed, total int
+	}{
+		{"no rollup", nil, 0, 0, 0},
+		{"null", json.RawMessage("null"), 0, 0, 0},
+		{"unreadable", json.RawMessage("{"), 0, 0, 0},
+		{"empty", list(), 0, 0, 0},
+		{"all done", list(run("COMPLETED", "SUCCESS"), ctx("SUCCESS")), 2, 0, 2},
+		{"mid-run", list(run("COMPLETED", "SUCCESS"), run("IN_PROGRESS", ""), run("QUEUED", "")), 1, 0, 3},
+		{"a failure", list(run("COMPLETED", "FAILURE"), run("COMPLETED", "SUCCESS"), run("IN_PROGRESS", "")), 2, 1, 3},
+		{"skipped, neutral, cancelled and stale count as finished", list(run("COMPLETED", "SKIPPED"), run("COMPLETED", "NEUTRAL"), run("COMPLETED", "CANCELLED"), run("COMPLETED", "STALE")), 4, 0, 4},
+		{"a waiting gate is left out", list(run("COMPLETED", "SUCCESS"), run("WAITING", ""), run("IN_PROGRESS", "")), 1, 0, 2},
+		{"only a gate left", list(run("WAITING", "")), 0, 0, 0},
+		{"commit statuses", list(ctx("PENDING"), ctx("EXPECTED"), ctx("SUCCESS"), ctx("FAILURE"), ctx("ERROR")), 3, 2, 5},
+		{"timed out and action required are failures", list(run("COMPLETED", "TIMED_OUT"), run("COMPLETED", "ACTION_REQUIRED"), run("COMPLETED", "STARTUP_FAILURE")), 3, 3, 3},
+		{"same name twice counts twice", list(run("COMPLETED", "SUCCESS"), run("COMPLETED", "SUCCESS")), 2, 0, 2},
+		{"an unknown entry type is not counted", list(`{"__typename":"Other"}`, run("COMPLETED", "SUCCESS")), 1, 0, 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			d := &DetailedPRInfo{StatusCheckRollup: c.rollup}
+			f, x, n := d.CIProgress()
+			if f != c.finished || x != c.failed || n != c.total {
+				t.Errorf("CIProgress() = finished %d, failed %d, total %d; want %d, %d, %d", f, x, n, c.finished, c.failed, c.total)
+			}
+		})
 	}
 }

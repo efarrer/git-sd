@@ -47,44 +47,97 @@ const (
 // stale check runs count as neither, and a rollup that can't be read is no
 // information rather than a guess.
 func (d *DetailedPRInfo) CIStatus() CIStatus {
-	if len(d.StatusCheckRollup) == 0 {
-		return CINone
-	}
-	var entries []struct {
-		Typename   string `json:"__typename"`
-		Status     string `json:"status"`     // CheckRun: QUEUED, IN_PROGRESS, COMPLETED, ...
-		Conclusion string `json:"conclusion"` // CheckRun, once completed
-		State      string `json:"state"`      // StatusContext: SUCCESS, FAILURE, ERROR, PENDING, EXPECTED
-	}
-	if err := json.Unmarshal(d.StatusCheckRollup, &entries); err != nil {
+	entries, ok := d.rollupEntries()
+	if !ok {
 		return CINone
 	}
 	running := false
 	for _, e := range entries {
-		switch e.Typename {
-		case "CheckRun":
-			switch e.Conclusion {
-			case "FAILURE", "TIMED_OUT", "STARTUP_FAILURE", "ACTION_REQUIRED":
-				return CIFailing
-			}
-			// WAITING is a job held at an approval gate (an environment review, a
-			// wait timer, a concurrency queue); nothing is executing, so it is not CI running.
-			if e.Status != "" && e.Status != "COMPLETED" && e.Status != "WAITING" {
-				running = true
-			}
-		case "StatusContext":
-			switch e.State {
-			case "FAILURE", "ERROR":
-				return CIFailing
-			case "PENDING", "EXPECTED":
-				running = true
-			}
+		if e.failed() {
+			return CIFailing
+		}
+		if e.unfinished() {
+			running = true
 		}
 	}
 	if running {
 		return CIRunning
 	}
 	return CINone
+}
+
+// rollupEntry is one check run or commit status of a PR's head commit.
+type rollupEntry struct {
+	Typename   string `json:"__typename"`
+	Status     string `json:"status"`     // CheckRun: QUEUED, IN_PROGRESS, COMPLETED, ...
+	Conclusion string `json:"conclusion"` // CheckRun, once completed
+	State      string `json:"state"`      // StatusContext: SUCCESS, FAILURE, ERROR, PENDING, EXPECTED
+}
+
+// rollupEntries parses the rollup; false when there is none or it can't be read.
+func (d *DetailedPRInfo) rollupEntries() ([]rollupEntry, bool) {
+	if len(d.StatusCheckRollup) == 0 {
+		return nil, false
+	}
+	var entries []rollupEntry
+	if err := json.Unmarshal(d.StatusCheckRollup, &entries); err != nil {
+		return nil, false
+	}
+	return entries, true
+}
+
+// waiting is a job held at an approval gate (an environment review, a wait
+// timer, a concurrency queue): nothing is executing, so it is neither running
+// nor progress.
+func (e rollupEntry) waiting() bool { return e.Typename == "CheckRun" && e.Status == "WAITING" }
+
+// failed: a check run that concluded badly, or a commit status in failure/error.
+func (e rollupEntry) failed() bool {
+	switch e.Typename {
+	case "CheckRun":
+		switch e.Conclusion {
+		case "FAILURE", "TIMED_OUT", "STARTUP_FAILURE", "ACTION_REQUIRED":
+			return true
+		}
+	case "StatusContext":
+		return e.State == "FAILURE" || e.State == "ERROR"
+	}
+	return false
+}
+
+// unfinished: still queued, running or pending (a waiting gate is not).
+func (e rollupEntry) unfinished() bool {
+	switch e.Typename {
+	case "CheckRun":
+		return e.Status != "" && e.Status != "COMPLETED" && !e.waiting()
+	case "StatusContext":
+		return e.State == "PENDING" || e.State == "EXPECTED"
+	}
+	return false
+}
+
+// CIProgress counts the PR's checks for display: how many have finished, how
+// many failed, and the total. A waiting approval gate is left out of all three;
+// skipped, neutral, cancelled and stale runs count as finished. total is 0
+// when there is nothing countable (no rollup, or one that can't be read).
+func (d *DetailedPRInfo) CIProgress() (finished, failed, total int) {
+	entries, ok := d.rollupEntries()
+	if !ok {
+		return 0, 0, 0
+	}
+	for _, e := range entries {
+		if (e.Typename != "CheckRun" && e.Typename != "StatusContext") || e.waiting() {
+			continue
+		}
+		total++
+		if !e.unfinished() {
+			finished++
+		}
+		if e.failed() {
+			failed++
+		}
+	}
+	return finished, failed, total
 }
 
 // DetailedPRInfo includes reviews and checks.

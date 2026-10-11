@@ -49,9 +49,9 @@ func TestSDStatusShowsCIStateFromCommitStatuses(t *testing.T) {
 
 	expect("Review", "a PR with no checks")
 	post("pending")
-	expect("CI running", "a pending commit status")
+	expect("CI running 0/1", "a pending commit status")
 	post("failure")
-	expect("CI failed", "a failing commit status")
+	expect("CI failed 1/1", "a failing commit status")
 	out := runGitSD(t, repoDir, "status")
 	if icon := statusCell(t, out, rowWith(t, out, "CI Commit 1"), "Icon"); !strings.Contains(icon, "🚨") {
 		t.Errorf("a failing CI shows the 🚨 icon, got %q", icon)

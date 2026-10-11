@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"git-sd/internal/github"
 	"git-sd/internal/ui"
 	"testing"
@@ -74,5 +75,59 @@ func TestClassifyPRWithConflict(t *testing.T) {
 		if got := classifyPR(&info); got != c.want {
 			t.Errorf("%s: classifyPR = %q, want %q", c.name, got, c.want)
 		}
+	}
+}
+
+// TestCIProgressSuffix pins the count after the Status word: only on CI
+// running (finished/total) and CI failed (failed/total), nothing for other
+// markers or when nothing is countable, and never part of the marker itself.
+func TestCIProgressSuffix(t *testing.T) {
+	done := `{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS"}`
+	busy := `{"__typename":"CheckRun","status":"IN_PROGRESS","conclusion":""}`
+	bad := `{"__typename":"CheckRun","status":"COMPLETED","conclusion":"FAILURE"}`
+	gate := `{"__typename":"CheckRun","status":"WAITING","conclusion":""}`
+	lookups := func(entries ...string) map[int]prLookup {
+		rollup := "["
+		for i, e := range entries {
+			if i > 0 {
+				rollup += ","
+			}
+			rollup += e
+		}
+		info := &github.DetailedPRInfo{PRInfo: github.PRInfo{State: "OPEN"}, StatusCheckRollup: json.RawMessage(rollup + "]")}
+		return map[int]prLookup{7: {info: info}}
+	}
+	cases := []struct {
+		name    string
+		id      ui.MarkerID
+		lookups map[int]prLookup
+		pr      int
+		want    string
+	}{
+		{"running shows finished of total", ui.CIRunning, lookups(done, done, busy), 7, " 2/3"},
+		{"failed shows failed of total", ui.CIFailed, lookups(bad, done, busy), 7, " 1/3"},
+		{"a gate is left out", ui.CIRunning, lookups(done, gate, busy), 7, " 1/2"},
+		{"other markers show nothing", ui.Review, lookups(done, busy), 7, ""},
+		{"approved shows nothing", ui.Approved, lookups(done), 7, ""},
+		{"nothing countable shows nothing", ui.CIRunning, lookups(gate), 7, ""},
+		{"no lookup shows nothing", ui.CIRunning, map[int]prLookup{}, 7, ""},
+		{"a failed lookup shows nothing", ui.CIRunning, map[int]prLookup{7: {err: errors.New("lookup failed")}}, 7, ""},
+	}
+	for _, c := range cases {
+		if got := ciProgress(c.id, c.lookups, c.pr); got != c.want {
+			t.Errorf("%s: ciProgress = %q, want %q", c.name, got, c.want)
+		}
+	}
+
+	// The count never changes the marker, so watch sees no event as it moves.
+	early := &github.DetailedPRInfo{PRInfo: github.PRInfo{State: "OPEN"}, StatusCheckRollup: json.RawMessage("[" + busy + "," + busy + "," + busy + "]")}
+	late := &github.DetailedPRInfo{PRInfo: github.PRInfo{State: "OPEN"}, StatusCheckRollup: json.RawMessage("[" + done + "," + done + "," + busy + "]")}
+	if classifyPR(early) != ui.CIRunning || classifyPR(late) != ui.CIRunning {
+		t.Errorf("0/3 and 2/3 must both be CI running, got %v and %v", classifyPR(early), classifyPR(late))
+	}
+
+	// With color the whole cell, count included, is colored; without, it is plain text.
+	if got := statusWordWith(ui.MarkerFor(ui.CIRunning), " 2/3", false); got != "CI running 2/3" {
+		t.Errorf("plain cell = %q", got)
 	}
 }

@@ -260,7 +260,7 @@ func buildStatusView(opts statusViewOptions) (*statusView, error) {
 		var icon, word string
 		if cm.ParentID == "" {
 			marker := ui.MarkerFor(withOperation(markerID(true, cm, prInfo), op.affects(cm.StackSet)))
-			icon, word = marker.Icon, statusWord(marker, color)
+			icon, word = marker.Icon, statusWordWith(marker, ciProgress(marker.ID, prInfo, cm.PRNumber), color)
 		} else {
 			// A sub-commit is part of its parent's PR: no state of its own, only
 			// whether it has reached that PR yet.
@@ -301,11 +301,35 @@ var stdoutIsTerminal = ui.StdoutIsTerminal
 
 // statusWord is the text of a Status cell: the marker's word, colored when
 // color is on.
-func statusWord(marker ui.Marker, color bool) string {
+func statusWord(marker ui.Marker, color bool) string { return statusWordWith(marker, "", color) }
+
+// statusWordWith is statusWord with a progress suffix (" 7/12") after the word.
+func statusWordWith(marker ui.Marker, suffix string, color bool) string {
 	if color {
-		return ui.Colorize(marker.Color, marker.Word)
+		return ui.Colorize(marker.Color, marker.Word+suffix)
 	}
-	return marker.Word
+	return marker.Word + suffix
+}
+
+// ciProgress is the count shown after "CI running" (checks finished/total) and
+// "CI failed" (checks failed/total); empty for every other marker, and when
+// nothing is countable. Display only: the marker never depends on it.
+func ciProgress(id ui.MarkerID, lookups map[int]prLookup, prNumber int) string {
+	if id != ui.CIRunning && id != ui.CIFailed {
+		return ""
+	}
+	lk, ok := lookups[prNumber]
+	if !ok || lk.err != nil || lk.info == nil {
+		return ""
+	}
+	finished, failed, total := lk.info.CIProgress()
+	if total == 0 {
+		return ""
+	}
+	if id == ui.CIFailed {
+		return fmt.Sprintf(" %d/%d", failed, total)
+	}
+	return fmt.Sprintf(" %d/%d", finished, total)
 }
 
 // defaultStatusColumns is the default value of sd.status.columns.
