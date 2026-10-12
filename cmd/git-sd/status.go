@@ -6,6 +6,7 @@ import (
 	"git-sd/internal/git"
 	"git-sd/internal/github"
 	"git-sd/internal/metadata"
+	"git-sd/internal/timing"
 	"git-sd/internal/ui"
 	"os"
 	"strings"
@@ -42,6 +43,7 @@ func runStatus(args []string) {
 		fmt.Println()
 	}
 
+	defer timing.Report(os.Stderr)
 	columns, err := statusColumns(git.ConfigGetWithDefault("sd.status.columns", defaultStatusColumns))
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -128,12 +130,16 @@ type statusView struct {
 // status table. It writes nothing: saving the metadata is the caller's job.
 func buildStatusView(opts statusViewOptions) (*statusView, error) {
 	columns, color, op := opts.Columns, opts.Color, opts.Op
+	done := timing.Phase("resolve base branch")
 	baseBranch, _, since, err := git.ResolveBaseBranch()
+	done()
 	if err != nil {
 		return nil, &statusFailure{line: fmt.Sprintf("Error: %v", err), cause: err}
 	}
 
+	done = timing.Phase("read commits")
 	commits, err := git.GetCommitsInRange(since)
+	done()
 	if err != nil {
 		return nil, &statusFailure{line: fmt.Sprintf("Error getting commits: %v", err), cause: err}
 	}
@@ -142,7 +148,9 @@ func buildStatusView(opts statusViewOptions) (*statusView, error) {
 		return &statusView{NoCommits: true, BaseBranch: baseBranch}, nil
 	}
 
+	done = timing.Phase("load metadata")
 	m, err := metadata.Load()
+	done()
 	if err != nil {
 		return nil, &statusFailure{line: fmt.Sprintf("Error loading metadata: %v", err), cause: err}
 	}
@@ -151,6 +159,7 @@ func buildStatusView(opts statusViewOptions) (*statusView, error) {
 
 	// Precompute each commit's current physical index, so a sub-commit's
 	// label can show its PARENT's index (see SPEC.md's "Hierarchical Indexing"), not its own.
+	done = timing.Phase("index trailers")
 	physIdx := map[string]int{}
 	for i, c := range commits {
 		if id := git.ExtractTrailer(c.Message, "git-sd-id"); id != "" {
@@ -169,7 +178,10 @@ func buildStatusView(opts statusViewOptions) (*statusView, error) {
 			prNumbers = append(prNumbers, cm.PRNumber)
 		}
 	}
+	done()
+	done = timing.Phase("fetch PR states")
 	prInfo := fetchPRInfos(prNumbers)
+	done()
 
 	// The PRs themselves (for watch): one per top-level group that has a PR,
 	// with its place among its Stack Set's groups and the state GitHub reports.
@@ -202,6 +214,7 @@ func buildStatusView(opts statusViewOptions) (*statusView, error) {
 
 	// Whether a sub-commit has reached its PR is judged by patch-id; compute
 	// them (one pipeline) only if some sub-commit's parent has a PR.
+	done = timing.Phase("patch-ids")
 	var patchIDs map[string]string
 	var patchErr error
 	for _, c := range commits {
@@ -213,6 +226,7 @@ func buildStatusView(opts statusViewOptions) (*statusView, error) {
 			}
 		}
 	}
+	done()
 	if patchErr != nil {
 		view.Warnings = append(view.Warnings, fmt.Sprintf("Warning: could not check which sub-commits are in their PRs: %v", patchErr))
 	}
@@ -222,6 +236,8 @@ func buildStatusView(opts statusViewOptions) (*statusView, error) {
 	view.Failures = summarizeLookups(prNumbers, prInfo)
 
 	// We'll track the order for metadata synchronization
+	done = timing.Phase("build rows")
+	defer func() { done() }()
 	for i, c := range commits {
 		id := git.ExtractTrailer(c.Message, "git-sd-id")
 

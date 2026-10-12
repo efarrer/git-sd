@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"fmt"
+	"git-sd/internal/timing"
 	"os"
 	"os/exec"
 	"regexp"
@@ -539,6 +540,7 @@ func BranchNameSlug(subject, gitSDID string) string {
 
 // ExtractTrailer gets the value of a trailer from a message.
 func ExtractTrailer(message, key string) string {
+	defer timing.Spawn("git interpret-trailers")()
 	cmd := exec.Command("git", "interpret-trailers", "--parse")
 	cmd.Stdin = strings.NewReader(message)
 	out, _ := cmd.Output()

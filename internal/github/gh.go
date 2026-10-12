@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"git-sd/internal/timing"
 	"os/exec"
 	"strings"
 	"sync"
@@ -96,6 +97,7 @@ func ghRun(stdin []byte, combined bool, args ...string) ([]byte, error) {
 		return nil, err
 	}
 
+	defer timing.Spawn("gh")()
 	cmd := exec.Command("gh", args...)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
