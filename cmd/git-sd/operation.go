@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"git-sd/internal/metadata"
+	"git-sd/internal/timing"
 	"git-sd/internal/ui"
 	"os"
 	"path/filepath"
@@ -86,6 +87,7 @@ func endOperation() {
 // exitCleanly is os.Exit that first releases the lock (os.Exit skips defers).
 func exitCleanly(code int) {
 	endOperation()
+	timing.Report(os.Stderr)
 	os.Exit(code)
 }
 

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"git-sd/internal/git"
 	"git-sd/internal/metadata"
-	"os"
 	"strconv"
 	"strings"
 )
@@ -12,31 +11,31 @@ import (
 func runAssign(args []string) {
 	if len(args) == 0 {
 		fmt.Println("Error: missing assignment string (e.g., feat-a:1,3-5)")
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	m, err := metadata.Load()
 	if err != nil {
 		fmt.Printf("Error loading metadata: %v\n", err)
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	_, _, since, err := git.ResolveBaseBranch()
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	// Ensure IDs are present
 	if err := git.RewriteCommitsWithIDs(since); err != nil {
 		fmt.Printf("Error tagging commits: %v\n", err)
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	commits, err := git.GetCommitsInRange(since)
 	if err != nil {
 		fmt.Printf("Error getting commits: %v\n", err)
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	anyFailed := false
@@ -141,12 +140,12 @@ func runAssign(args []string) {
 
 	if err := m.Save(); err != nil {
 		fmt.Printf("Error saving metadata: %v\n", err)
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	if anyFailed {
 		fmt.Println("Some assignments failed; see errors above.")
-		os.Exit(1)
+		exitCleanly(1)
 	}
 	fmt.Println("Commits assigned successfully.")
 }

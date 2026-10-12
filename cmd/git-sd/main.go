@@ -2,13 +2,15 @@ package main
 
 import (
 	"fmt"
+	"git-sd/internal/timing"
 	"os"
 )
 
 func main() {
+	defer timing.Report(os.Stderr) // GIT_SD_TIMING=1; exits go through exitCleanly, which reports too
 	if len(os.Args) < 2 {
 		showUsage()
-		os.Exit(0)
+		exitCleanly(0)
 	}
 
 	command := os.Args[1]
@@ -17,7 +19,7 @@ func main() {
 		if reconcilePending() {
 			if command != "status" {
 				fmt.Printf("Error: %s\n", pendingInProgressMsg)
-				os.Exit(1)
+				exitCleanly(1)
 			}
 			fmt.Printf("Note: %s.\n", pendingInProgressMsg)
 		}
@@ -48,7 +50,7 @@ func main() {
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
 		showUsage()
-		os.Exit(1)
+		exitCleanly(1)
 	}
 }
 

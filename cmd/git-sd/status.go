@@ -43,11 +43,10 @@ func runStatus(args []string) {
 		fmt.Println()
 	}
 
-	defer timing.Report(os.Stderr)
 	columns, err := statusColumns(git.ConfigGetWithDefault("sd.status.columns", defaultStatusColumns))
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
+		exitCleanly(1)
 	}
 	op := activeOperation() // a sync or merge running right now, if any
 	color := ui.ColorEnabled(git.ConfigGetWithDefault("sd.status.color", "true"), os.Getenv, stdoutIsTerminal())
@@ -60,7 +59,7 @@ func runStatus(args []string) {
 		} else {
 			fmt.Printf("Error: %v\n", err)
 		}
-		os.Exit(1)
+		exitCleanly(1)
 	}
 	if view.NoCommits {
 		if op != nil {

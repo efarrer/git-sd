@@ -4,70 +4,69 @@ import (
 	"fmt"
 	"git-sd/internal/git"
 	"git-sd/internal/metadata"
-	"os"
 	"strings"
 )
 
 func runMove(args []string) {
 	if len(args) == 0 {
 		fmt.Println("Error: missing move string (e.g., 3:1, or 3:1.1)")
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	srcAddr, destAddr, ok := strings.Cut(args[0], ":")
 	if !ok {
 		fmt.Printf("Error: invalid move format '%s'\n", args[0])
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	srcIdxArg, srcRankArg, err := parseAddress(srcAddr)
 	if err != nil {
 		fmt.Printf("Error: invalid source '%s': %v\n", srcAddr, err)
-		os.Exit(1)
+		exitCleanly(1)
 	}
 	destIdxArg, newRank, err := parseAddress(destAddr)
 	if err != nil {
 		fmt.Printf("Error: invalid destination '%s': %v\n", destAddr, err)
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	_, _, since, err := git.ResolveBaseBranch()
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	// Ensure IDs are present (mirrors 'assign') so the moved commit always has
 	// a git-sd-id to record its new ParentID/SubRank/StackSet against.
 	if err := git.RewriteCommitsWithIDs(since); err != nil {
 		fmt.Printf("Error tagging commits: %v\n", err)
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	commits, err := git.GetCommitsInRange(since)
 	if err != nil {
 		fmt.Printf("Error getting commits: %v\n", err)
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	if destIdxArg < 0 || destIdxArg >= len(commits) {
 		fmt.Println("Error: index out of range")
-		os.Exit(1)
+		exitCleanly(1)
 	}
 	m, err := metadata.Load()
 	if err != nil {
 		fmt.Printf("Error loading metadata: %v\n", err)
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	srcIdx, _, err := resolveExisting(commits, m, srcIdxArg, srcRankArg)
 	if err != nil {
 		fmt.Printf("Error: invalid source: %v\n", err)
-		os.Exit(1)
+		exitCleanly(1)
 	}
 	if srcIdx == destIdxArg {
 		fmt.Println("Error: source and destination are the same commit")
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	if newRank == "" {
@@ -77,18 +76,18 @@ func runMove(args []string) {
 		// Set it was already contributing to).
 		if err := reorderCommits(since, commits, m, srcIdx, destIdxArg); err != nil {
 			reportMoveError(err)
-			os.Exit(1)
+			exitCleanly(1)
 		}
 	} else {
 		if err := attachAsSubCommit(since, commits, m, srcIdx, destIdxArg, newRank); err != nil {
 			reportMoveError(err)
-			os.Exit(1)
+			exitCleanly(1)
 		}
 	}
 
 	if err := m.Save(); err != nil {
 		fmt.Printf("Error saving metadata: %v\n", err)
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	fmt.Println("Commits reordered successfully.")

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"git-sd/internal/git"
 	"git-sd/internal/metadata"
-	"os"
 	"strconv"
 )
 
@@ -14,48 +13,48 @@ import (
 func runFixup(args []string) {
 	if len(args) != 1 {
 		fmt.Println("Error: usage: git sd fixup <target-index>")
-		os.Exit(1)
+		exitCleanly(1)
 	}
 	targetIdx, err := strconv.Atoi(args[0])
 	if err != nil {
 		fmt.Printf("Error: invalid target index '%s'\n", args[0])
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	_, _, since, err := git.ResolveBaseBranch()
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	if err := git.RewriteCommitsWithIDs(since); err != nil {
 		fmt.Printf("Error tagging commits: %v\n", err)
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	commits, err := git.GetCommitsInRange(since)
 	if err != nil {
 		fmt.Printf("Error getting commits: %v\n", err)
-		os.Exit(1)
+		exitCleanly(1)
 	}
 	if len(commits) == 0 {
 		fmt.Println("Error: no local commits to fix up")
-		os.Exit(1)
+		exitCleanly(1)
 	}
 	srcIdx := len(commits) - 1 // HEAD
 	if targetIdx < 0 || targetIdx >= len(commits) {
 		fmt.Println("Error: target index out of range")
-		os.Exit(1)
+		exitCleanly(1)
 	}
 	if targetIdx == srcIdx {
 		fmt.Println("Error: HEAD is already the target commit")
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	m, err := metadata.Load()
 	if err != nil {
 		fmt.Printf("Error loading metadata: %v\n", err)
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	// (attachAsSubCommit rejects HEAD already having its own sub-commits,
@@ -65,7 +64,7 @@ func runFixup(args []string) {
 	targetCM := m.Commits[targetID]
 	if targetCM.StackSet == "" {
 		fmt.Println("Error: target commit is not assigned to a Stack Set yet — assign it first.")
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	var siblingRanks []string
@@ -78,12 +77,12 @@ func runFixup(args []string) {
 
 	if err := attachAsSubCommit(since, commits, m, srcIdx, targetIdx, rank); err != nil {
 		reportMoveError(err)
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	if err := m.Save(); err != nil {
 		fmt.Printf("Error saving metadata: %v\n", err)
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	fmt.Printf("Attached as sub-commit %d.%s.\n", targetIdx, rank)

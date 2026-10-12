@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"git-sd/internal/git"
 	"git-sd/internal/metadata"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -29,7 +28,7 @@ func runRebase(args []string) {
 				v, err := strconv.Atoi(args[i])
 				if err != nil || v < 1 {
 					fmt.Printf("Error: invalid --rollback backup number '%s' (must be a positive integer; see 'git sd rebase --list')\n", args[i])
-					os.Exit(1)
+					exitCleanly(1)
 				}
 				n = v
 			}
@@ -37,18 +36,18 @@ func runRebase(args []string) {
 			list = true
 		default:
 			fmt.Printf("Error: unknown argument '%s' (usage: git sd rebase [--rollback [<n>] | --list])\n", args[i])
-			os.Exit(1)
+			exitCleanly(1)
 		}
 	}
 	if rollback && list {
 		fmt.Println("Error: --rollback cannot be combined with --list")
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	m, err := metadata.Load()
 	if err != nil {
 		fmt.Printf("Error loading metadata: %v\n", err)
-		os.Exit(1)
+		exitCleanly(1)
 	}
 
 	switch {
@@ -57,23 +56,23 @@ func runRebase(args []string) {
 	case rollback:
 		if err := requireClean(); err != nil {
 			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+			exitCleanly(1)
 		}
 		if n > len(m.RebaseBackups) {
 			fmt.Printf("Error: no backup #%d (%d available; see 'git sd rebase --list')\n", n, len(m.RebaseBackups))
-			os.Exit(1)
+			exitCleanly(1)
 		}
 		idx := len(m.RebaseBackups) - n
 		b := m.RebaseBackups[idx]
 		if err := restoreBackup(m, idx); err != nil {
 			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+			exitCleanly(1)
 		}
 		fmt.Printf("Rolled back to backup #%d (%s, %s).\n", n, b.Timestamp, shortHash(b.SHA))
 	default:
 		if err := rebase(m); err != nil {
 			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+			exitCleanly(1)
 		}
 	}
 }
