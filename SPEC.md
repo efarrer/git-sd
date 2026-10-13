@@ -241,7 +241,7 @@ To set values for all projects (home config), use `git config --global <key> <va
     - macOS (built in): `git config sd.watch.notify-command 'osascript -e "on run argv" -e "display notification (item 1 of argv) with title (item 2 of argv)" -e "end run" "$GIT_SD_MESSAGE" "$GIT_SD_TITLE"'`
     - Linux (libnotify): `git config sd.watch.notify-command 'notify-send "$GIT_SD_TITLE" "$GIT_SD_MESSAGE"'`
     - Windows, typed in Git Bash, which provides the `sh` git-sd runs the command with, after a one-time `Install-Module BurntToast` in PowerShell: `git config sd.watch.notify-command "powershell.exe -NoProfile -Command 'New-BurntToastNotification -Text \$env:GIT_SD_TITLE, \$env:GIT_SD_MESSAGE'"` (on Windows Pro editions without BurntToast: `msg * "$GIT_SD_MESSAGE"`).
-    - The macOS example has been run by the author; the Linux and Windows ones use each platform's standard tool but have not been run by the author.
+    - The macOS example has been run and confirmed to show a notification; the Linux and Windows ones use each platform's standard tool but have not been run by the author.
 
 ## Future Considerations
 - Advanced conflict resolution within stacks.
