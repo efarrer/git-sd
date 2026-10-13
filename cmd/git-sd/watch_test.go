@@ -413,10 +413,102 @@ func TestNotifierRunsRealCommandsAndWarnsOnce(t *testing.T) {
 func TestSleepWallStopsWhenCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if sleepWall(ctx, time.Minute, nil) {
+	if sleepWall(ctx, time.Minute, nil, nil) {
 		t.Error("a cancelled sleep reports false")
 	}
-	if !sleepWall(context.Background(), 20*time.Millisecond, nil) {
+	if !sleepWall(context.Background(), 20*time.Millisecond, nil, nil) {
 		t.Error("a completed sleep reports true")
+	}
+}
+
+func TestFooterLine(t *testing.T) {
+	state := "watching 2 PR(s) · checked 09:51:18"
+	for _, c := range []struct {
+		remaining time.Duration
+		want      string
+	}{
+		{20 * time.Second, "next check in 20s"},
+		{19400 * time.Millisecond, "next check in 19s"},
+		{time.Minute, "next check in 1m0s"},
+		{300 * time.Millisecond, "next check in 0s"},
+		{-time.Second, "next check in 0s"},
+	} {
+		want := state + " · " + c.want + " · Ctrl-C to stop"
+		if got := footerLine(state, c.remaining); got != want {
+			t.Errorf("footerLine(%v) = %q, want %q", c.remaining, got, want)
+		}
+	}
+}
+
+func TestCountdownRewritesOnlyTheFooterLine(t *testing.T) {
+	var buf bytes.Buffer
+	w := &watcher{out: &buf, tty: true, footer: "watching 1 PR(s) · checked 15:00:01"}
+	w.countdown(3 * time.Second)
+	w.countdown(2 * time.Second)
+	want := "\r\x1b[Kwatching 1 PR(s) · checked 15:00:01 · next check in 3s · Ctrl-C to stop" +
+		"\r\x1b[Kwatching 1 PR(s) · checked 15:00:01 · next check in 2s · Ctrl-C to stop"
+	if buf.String() != want {
+		t.Errorf("got %q, want %q", buf.String(), want)
+	}
+	buf.Reset()
+	(&watcher{out: &buf, tty: false, footer: "x"}).countdown(time.Second)
+	(&watcher{out: &buf, tty: true}).countdown(time.Second)
+	if buf.Len() != 0 {
+		t.Errorf("with no terminal or no footer nothing is written, got %q", buf.String())
+	}
+}
+
+func TestTerminalFooterCountsDownAndStopStartsANewLine(t *testing.T) {
+	w, out, _, _, _ := harness([]watchStep{{snap: snapOf(pr(1, ui.Review))}}, true)
+	w.sleep = func(ctx context.Context, d time.Duration) bool {
+		for _, r := range []time.Duration{9 * time.Second, 8 * time.Second, 7 * time.Second} {
+			w.countdown(r)
+		}
+		return false
+	}
+	if err := w.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	drawn := strings.Index(text, "next check in 1s") // the full redraw announces the first wait
+	rewrite := strings.Index(text, "\r\x1b[Kwatching 1 PR(s) · checked ")
+	n9, n8, n7 := strings.Index(text, "next check in 9s"), strings.Index(text, "next check in 8s"), strings.Index(text, "next check in 7s")
+	if drawn < 0 || rewrite < drawn || n9 < rewrite || n8 < n9 || n7 < n8 {
+		t.Errorf("the footer is drawn once, then rewritten counting down 9s, 8s, 7s in order:\n%q", text)
+	}
+	if !strings.HasSuffix(text, "next check in 7s · Ctrl-C to stop\nStopped watching.\n") {
+		t.Errorf("the stop message must start its own line:\n%q", text)
+	}
+}
+
+func TestNonTerminalOutputHasNoScreenControl(t *testing.T) {
+	w, out, _, _, _ := harness([]watchStep{
+		{snap: snapOf(pr(1, ui.Review))},
+		{snap: snapOf(pr(1, ui.Approved))},
+	}, false)
+	if err := w.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(out.String(), "\r\x1b") {
+		t.Errorf("piped output must have no carriage returns or escapes:\n%q", out.String())
+	}
+}
+
+func TestSleepWallTicksEverySecondWithTheTimeLeft(t *testing.T) {
+	var left []time.Duration
+	start := time.Now()
+	if !sleepWall(context.Background(), 2200*time.Millisecond, nil, func(r time.Duration) { left = append(left, r) }) {
+		t.Fatalf("an uninterrupted wait returns true")
+	}
+	if time.Since(start) < 2*time.Second {
+		t.Errorf("it waits the full time, took %v", time.Since(start))
+	}
+	if len(left) < 3 || left[0] > 2200*time.Millisecond || left[0] < 2*time.Second {
+		t.Fatalf("the first tick comes before waiting and shows about the whole wait, got %v", left)
+	}
+	for i := 1; i < len(left); i++ {
+		if left[i] >= left[i-1] {
+			t.Errorf("the time left must keep decreasing, got %v", left)
+		}
 	}
 }

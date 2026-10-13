@@ -379,7 +379,8 @@ watch
                change, doubling while nothing changes up to
                'sd.watch.max-interval' (60s; 20s while CI is running).
   Output:      On a terminal: the same table 'status' prints, redrawn in
-               place, plus a footer line and nothing else. Otherwise: that
+               place, plus a footer line (its "next check in" counts
+               down every second) and nothing else. Otherwise: that
                table once, then one line per
                event: "<HH:MM:SS>  <set> <pos>/<size>  PR #<n>  <from> -> <to>
                <title>", plus

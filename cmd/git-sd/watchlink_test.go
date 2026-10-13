@@ -223,7 +223,7 @@ func TestRingWatchRingsOncePerCommand(t *testing.T) {
 
 func TestSleepWallWakesEarlyWhenRung(t *testing.T) {
 	start := time.Now()
-	if !sleepWall(context.Background(), time.Hour, func() bool { return true }) {
+	if !sleepWall(context.Background(), time.Hour, func() bool { return true }, nil) {
 		t.Errorf("being woken is not being cancelled: the loop must keep going")
 	}
 	if time.Since(start) > 500*time.Millisecond {
@@ -231,7 +231,7 @@ func TestSleepWallWakesEarlyWhenRung(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if sleepWall(ctx, time.Hour, func() bool { return true }) {
+	if sleepWall(ctx, time.Hour, func() bool { return true }, nil) {
 		t.Errorf("a cancelled context still ends the loop")
 	}
 }

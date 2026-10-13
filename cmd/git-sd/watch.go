@@ -378,6 +378,7 @@ type watcher struct {
 	tty                      bool
 	snapshot                 func() (watchSnapshot, error)
 	sleep                    func(ctx context.Context, d time.Duration) bool // false once ctx is done
+	footer                   string                                          // the footer without its countdown: what is rewritten each second
 	rung                     func() bool                                     // another command asked for a check now (consumes the request)
 	now                      func() time.Time
 	notifier                 *notifier
@@ -478,19 +479,36 @@ func (w *watcher) run(ctx context.Context) error {
 			if outage {
 				state = "GitHub unreachable, retrying · last good check " + lastChecked
 			}
-			fmt.Fprintf(w.out, "\n%s · next check in %s · Ctrl-C to stop\n", state, interval.Round(time.Second))
+			w.footer = state
+			fmt.Fprint(w.out, "\n"+footerLine(state, interval)) // no newline: countdown rewrites this line
 		}
 		if !w.sleep(ctx, interval) {
+			if w.tty {
+				fmt.Fprintln(w.out) // end the footer line
+			}
 			fmt.Fprintln(w.out, "Stopped watching.")
 			return nil
 		}
 	}
 }
 
+// footerLine is the terminal footer: the state, and the time left to the next check.
+func footerLine(state string, remaining time.Duration) string {
+	return fmt.Sprintf("%s · next check in %s · Ctrl-C to stop", state, max(remaining, 0).Round(time.Second))
+}
+
+// countdown rewrites the footer line in place with the time left. Terminal only.
+func (w *watcher) countdown(remaining time.Duration) {
+	if w.tty && w.footer != "" {
+		fmt.Fprint(w.out, "\r\x1b[K"+footerLine(w.footer, remaining))
+	}
+}
+
 // sleepWall waits d, checking the wall clock every second so that after a
 // laptop wakes the next poll is immediate instead of up to a full interval late.
-// wake is asked once a second too; when it says true the wait ends early.
-func sleepWall(ctx context.Context, d time.Duration, wake func() bool) bool {
+// wake is asked once a second too; when it says true the wait ends early. tick,
+// if not nil, is told the time left each time, first before waiting at all.
+func sleepWall(ctx context.Context, d time.Duration, wake func() bool, tick func(remaining time.Duration)) bool {
 	deadline := time.Now().Round(0).Add(d)
 	for {
 		if wake != nil && wake() {
@@ -500,6 +518,9 @@ func sleepWall(ctx context.Context, d time.Duration, wake func() bool) bool {
 		remaining = deadline.Sub(time.Now().Round(0))
 		if remaining <= 0 {
 			return ctx.Err() == nil
+		}
+		if tick != nil {
+			tick(remaining)
 		}
 		select {
 		case <-ctx.Done():
@@ -566,7 +587,11 @@ func runWatch(args []string) {
 	}
 	feed := newRingFeed() // other commands ring it by touching watch.pid
 	w.rung = feed.take
-	w.sleep = func(ctx context.Context, d time.Duration) bool { return sleepWall(ctx, d, feed.changed) }
+	var tick func(time.Duration)
+	if tty {
+		tick = w.countdown
+	}
+	w.sleep = func(ctx context.Context, d time.Duration) bool { return sleepWall(ctx, d, feed.changed, tick) }
 	err = w.run(ctx)
 	release()
 	if err != nil {
