@@ -513,12 +513,15 @@ func (w *watcher) countdown(remaining time.Duration) {
 // laptop wakes the next poll is immediate instead of up to a full interval late.
 // wake is asked once a second too; when it says true the wait ends early. tick,
 // if not nil, is told the time left each time, first before waiting at all and
-// finally with 0 when the wait ends (not when it is cut short by a ring).
+// finally with 0 when the wait ends, whether it ran out or was cut short by a ring.
 func sleepWall(ctx context.Context, d time.Duration, wake func() bool, tick func(remaining time.Duration)) bool {
 	deadline := time.Now().Round(0).Add(d)
 	for {
 		if wake != nil && wake() {
-			return ctx.Err() == nil // rung by another command: poll now
+			if tick != nil {
+				tick(0) // rung by another command: the check starts now
+			}
+			return ctx.Err() == nil
 		}
 		remaining := time.Until(deadline.Round(0))
 		remaining = deadline.Sub(time.Now().Round(0))
