@@ -25,7 +25,13 @@ without installing anything, since they're printed directly by the binary.
 4. **Address PR feedback:** Make the fix (it lands at `HEAD`), then `git sd fixup <target-index>` to attach it as the next sub-commit of that PR — no index/rank math required.
 5. **Merge:** Merge approved PRs in the stack on GitHub: `git sd merge feat-a` (your local branch is untouched).
 6. **Reconcile:** after PRs land (via `git sd merge` or GitHub's UI), `git sd rebase` drops the landed commits from your branch and retires their tracking; the next `git sd sync` deletes their remote branches. Safe to run at any point, even mid-stack, since a Stack Set can keep growing after a partial merge (see SPEC.md's "Living Stack Sets"). `git sd rebase --rollback` undoes it.
-7. **Watch (optional):** `git sd watch` follows your PRs on GitHub and tells you when one changes (CI finished or failed, approved, conflict, merged), with a bell and an optional desktop notification (`sd.watch.notify-command`). It is read-only and runs until you press Ctrl-C.
+7. **Watch (optional):** `git sd watch` follows your PRs on GitHub and tells you when one changes (CI finished or failed, approved, conflict, merged), with a bell and an optional desktop notification (`sd.watch.notify-command`). It is read-only and runs until you press Ctrl-C. Try the notification setting without waiting for a real change with `git sd notify-test` (it lists the `GIT_SD_*` variables your command receives; `--from approved --to merged` picks the change to simulate).
+
+   Desktop notification settings (use `git config --global` to set one for every repository). The macOS one has been run by the author; the Linux and Windows ones use each platform's standard tool but have not:
+
+   - macOS: `git config sd.watch.notify-command 'osascript -e "on run argv" -e "display notification (item 1 of argv) with title (item 2 of argv)" -e "end run" "$GIT_SD_MESSAGE" "$GIT_SD_TITLE"'`
+   - Linux: `git config sd.watch.notify-command 'notify-send "$GIT_SD_TITLE" "$GIT_SD_MESSAGE"'`
+   - Windows (in Git Bash, after a one-time `Install-Module BurntToast` in PowerShell): `git config sd.watch.notify-command "powershell.exe -NoProfile -Command 'New-BurntToastNotification -Text \$env:GIT_SD_TITLE, \$env:GIT_SD_MESSAGE'"`
 
 ## Documentation Structure
 

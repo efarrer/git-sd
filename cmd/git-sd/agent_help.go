@@ -1,14 +1,25 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // showAgentUsage prints a complete, machine-oriented command reference:
 // every command's exact argument grammar, options, behavior, output, and
 // error conditions, so an agent can drive git-sd correctly without reading
-// the source or SPEC.md. Kept in its own file since it's substantially more
+// the source or any other document. Kept in its own file since it's substantially more
 // detailed (and longer) than showUsage()'s human-facing summary.
-func showAgentUsage() {
-	fmt.Print(`git-sd agent reference
+func showAgentUsage() { fmt.Print(agentUsageText()) }
+
+// agentUsageText is the text of `git sd --agent`. The notification variables and
+// examples are filled in from the same tables `notify-test` prints.
+func agentUsageText() string {
+	return strings.NewReplacer(
+		"{{NOTIFY_VARIABLES}}", indentLines(notifyVariablesTable(nil), "    "),
+		"{{NOTIFY_EVENTS}}", indentLines(notifyEventKindsTable(), "    "),
+		"{{NOTIFY_EXAMPLES}}", indentLines(notifyExamples, "    "),
+	).Replace(`git-sd agent reference
 
 OVERVIEW
   git-sd manages a stacked-diff workflow: a linear sequence of commits on the
@@ -89,9 +100,14 @@ status
                (📤: not in its PR yet; run 'git sd sync'). Index is
                "N" for a top-level commit, or "N.R" for a sub-commit, where N
                is its PARENT's current physical index and R is its rank (an
-               opaque digit string, e.g. "1", "45" — see SPEC.md's
-               "Hierarchical Indexing"; compare/copy it exactly as shown,
-               never treat it as a plain integer). If there are no commits
+               opaque digit string, e.g. "1", "45": ranks let a new
+               sub-commit go between existing siblings without renumbering
+               anything, so compare/copy it exactly as shown, never treat
+               it as a plain integer, and paste it straight back into
+               move/assign/fixup). "N.R" only ever REFERS TO an existing
+               sub-commit (as move's source, or in assign); a destination
+               or target argument's integer part always names a top-level
+               commit. If there are no commits
                since the base branch:
                "No local commits found since <base-branch>."
   Config:
@@ -199,9 +215,14 @@ fixup
   Behavior:    Sugar for 'git sd move <index of HEAD>:<target-index>.<rank>'
                — always takes HEAD as the source, and computes <rank>
                automatically as the next rank after the target's current
-               highest sub-commit rank (see SPEC.md's fixup section for the
-               auto-rank algorithm). Use 'move' directly for anything more specific
-               (a different source, an explicit rank, reordering).
+               highest sub-commit rank: 0.1, 0.2, ... 0.9, then 0.91,
+               0.92, ... (it never collides). Untracked commits in range
+               are tracked first, so a fresh fix commit attaches in one
+               step. Refused if <target-index> is not assigned to a Stack
+               Set, is HEAD itself, or if HEAD is a top-level commit that
+               already has sub-commits of its own (use 'move' for that).
+               Use 'move' directly for anything more specific (a different
+               source, an explicit rank, reordering).
   Output:      "Attached as sub-commit <target-index>.<rank>."
   Errors:      <target-index> not assigned to any Stack Set; <target-index>
                is HEAD itself; HEAD is a top-level commit that already has
@@ -367,15 +388,10 @@ watch
                after 3 failed polls in a row, and "Back online.". Ends with
                "Stopped watching." (exit 0) on Ctrl-C/SIGTERM.
   Notify:      Terminal bell once per cycle with changes (terminal only), and
-               'sd.watch.notify-command' (run with sh -c per change) with the
-               environment GIT_SD_TITLE (short: "feat-a 3/5: Approved"),
-               GIT_SD_MESSAGE (a sentence naming the PR: "CI passed on PR 3
-               of 5 in feat-a (#120), now Approved: <title>"), GIT_SD_EVENT
-               (ci-running, ci-passed, ci-failed, approved,
-               changes-requested, conflict, merged, closed, draft,
-               ready-for-review, state-changed, offline), GIT_SD_STACK_SET,
-               GIT_SD_POSITION, GIT_SD_SET_SIZE, GIT_SD_PR_NUMBER,
-               GIT_SD_PR_URL, GIT_SD_PR_TITLE, GIT_SD_FROM and GIT_SD_TO.
+               'sd.watch.notify-command' (run with sh -c per change, with the
+               GIT_SD_* environment variables listed under 'notify-test'
+               below; GIT_SD_MESSAGE reads like "CI passed on PR 3 of 5 in
+               feat-a (#120), now Approved: <title>").
   Errors:      A problem on the first poll (no usable gh, no base branch, no
                metadata, invalid interval settings) prints "Error: ..." and
                exits 1. Later GitHub outages are retried, not fatal.
@@ -384,6 +400,45 @@ watch
     git config sd.watch.notify-command 'notify-send "$GIT_SD_TITLE" "$GIT_SD_MESSAGE"'
     git sd rebase --rollback    undo the most recent rebase
     git sd rebase --rollback 2
+
+notify-test
+  Usage:       git sd notify-test [--from <state>] [--to <state>] [--offline] [--list]
+  Arguments:   --from <state>, --to <state>  the change to simulate, as Status
+                 words in any case (Review, Draft, "CI running" or
+                 ci-running, "CI failed", Changes, Conflict, Approved, Merged,
+                 Closed). Default: Review to Approved. If only one is given the
+                 other defaults sensibly. They must differ.
+               --offline   simulate the "cannot reach GitHub" notice (no PR;
+                 only GIT_SD_TITLE, GIT_SD_MESSAGE and GIT_SD_EVENT are set).
+                 Cannot be combined with --from/--to.
+               --list      print every GIT_SD_EVENT value and when it is sent.
+  Behavior:    Tries 'sd.watch.notify-command' without waiting for a real
+               change. Builds a sample notification exactly the way 'watch'
+               does (a made-up PR #123, the second of three in Stack Set
+               "demo"), shows the variables the command receives, then runs
+               the configured command with them (stopped after 10 seconds,
+               as in 'watch') and rings the bell on a terminal. Reads only
+               git config: it needs no repository or GitHub access.
+  Output:      A heading naming the simulated change, the variables table,
+               then "Running: <command>", what the command printed and "The
+               command succeeded." (or "The command failed: <reason>", exit
+               1). With no command set: "sd.watch.notify-command is not set,
+               so nothing was run" plus the examples below.
+  Variables:   The command's environment also has the usual process
+               environment; these are added (the PR ones are not set for the
+               offline notice):
+{{NOTIFY_VARIABLES}}
+  Events:      GIT_SD_EVENT is one of:
+{{NOTIFY_EVENTS}}
+  Examples:    The command runs through sh -c and reads the variables from
+               its environment, so a PR title with a quote in it cannot break
+               it. Desktop notification settings (use 'git config --global'
+               for every repository):
+{{NOTIFY_EXAMPLES}}
+    git sd notify-test
+    git sd notify-test --from approved --to merged
+    git sd notify-test --from "CI running" --to "CI failed"
+    git sd notify-test --offline
 
 TYPICAL AGENT WORKFLOW
   1. git sd status                    inspect current commits/state
@@ -420,4 +475,15 @@ CONFIGURATION (git config; see 'git config' for project scope, 'git config
                                      configured; otherwise commands fail
                                      asking you to set this explicitly.
 `)
+}
+
+// indentLines prefixes every non-empty line of s with prefix.
+func indentLines(s, prefix string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	for i, l := range lines {
+		if l != "" {
+			lines[i] = prefix + l
+		}
+	}
+	return strings.Join(lines, "\n")
 }

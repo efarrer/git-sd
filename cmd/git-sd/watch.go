@@ -314,20 +314,32 @@ func (n *notifier) notify(events []watchEvent) {
 		fmt.Fprint(n.bell, "\a")
 	}
 	for _, e := range events {
-		n.invoke([]string{
-			"GIT_SD_TITLE=" + eventTitle(e),
-			"GIT_SD_MESSAGE=" + eventMessage(e),
-			"GIT_SD_EVENT=" + e.Kind,
-			"GIT_SD_POSITION=" + strconv.Itoa(e.PR.Position),
-			"GIT_SD_SET_SIZE=" + strconv.Itoa(e.PR.SetSize),
-			"GIT_SD_PR_NUMBER=" + strconv.Itoa(e.PR.Number),
-			"GIT_SD_PR_URL=" + e.PR.URL,
-			"GIT_SD_PR_TITLE=" + e.PR.Title,
-			"GIT_SD_STACK_SET=" + e.PR.StackSet,
-			"GIT_SD_FROM=" + markerWord(e.From),
-			"GIT_SD_TO=" + markerWord(e.To),
-		})
+		n.invoke(eventEnv(e))
 	}
+}
+
+// eventEnv is the environment the notify command gets for one PR change, in
+// the order of notifyVariables (a test keeps the two in step).
+func eventEnv(e watchEvent) []string {
+	return []string{
+		"GIT_SD_TITLE=" + eventTitle(e),
+		"GIT_SD_MESSAGE=" + eventMessage(e),
+		"GIT_SD_EVENT=" + e.Kind,
+		"GIT_SD_STACK_SET=" + e.PR.StackSet,
+		"GIT_SD_POSITION=" + strconv.Itoa(e.PR.Position),
+		"GIT_SD_SET_SIZE=" + strconv.Itoa(e.PR.SetSize),
+		"GIT_SD_PR_NUMBER=" + strconv.Itoa(e.PR.Number),
+		"GIT_SD_PR_URL=" + e.PR.URL,
+		"GIT_SD_PR_TITLE=" + e.PR.Title,
+		"GIT_SD_FROM=" + markerWord(e.From),
+		"GIT_SD_TO=" + markerWord(e.To),
+	}
+}
+
+// messageEnv is the environment for a notification that is not about one PR
+// (an outage): only the first three variables are set.
+func messageEnv(kind, text string) []string {
+	return []string{"GIT_SD_TITLE=git sd watch: " + kind, "GIT_SD_MESSAGE=" + text, "GIT_SD_EVENT=" + kind}
 }
 
 // message sends a notification that is not about one PR (an outage).
@@ -335,7 +347,7 @@ func (n *notifier) message(kind, text string) {
 	if n.bell != nil {
 		fmt.Fprint(n.bell, "\a")
 	}
-	n.invoke([]string{"GIT_SD_TITLE=git sd watch: " + kind, "GIT_SD_MESSAGE=" + text, "GIT_SD_EVENT=" + kind})
+	n.invoke(messageEnv(kind, text))
 }
 
 // runNotifyCommand runs the command through sh with the event environment.

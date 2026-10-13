@@ -43,6 +43,8 @@ func main() {
 		runRebase(os.Args[2:])
 	case "watch":
 		runWatch(os.Args[2:])
+	case "notify-test":
+		runNotifyTest(os.Args[2:])
 	case "help", "--help", "-h":
 		showUsage()
 	case "--agent":
@@ -54,8 +56,11 @@ func main() {
 	}
 }
 
-func showUsage() {
-	fmt.Print(`usage: git sd <command> [<args>]
+func showUsage() { fmt.Print(usageText()) }
+
+// usageText is the text of `git sd` / `git sd --help`.
+func usageText() string {
+	return `usage: git sd <command> [<args>]
 
 Commands:
   track       Add git-sd-id trailers to untracked commits
@@ -74,6 +79,10 @@ Commands:
                 --list (show backups)
   watch       Watch the PRs' GitHub state and notify when it changes (runs
               until you stop it with Ctrl-C; read-only)
+  notify-test Send a sample notification through sd.watch.notify-command and
+              show the GIT_SD_* variables it receives
+                Options: --from <state>, --to <state> (the change to simulate,
+                default Review to Approved), --offline, --list (event kinds)
 
 Options:
   --help      Show this help message
@@ -86,7 +95,7 @@ Configuration (via git config):
   sd.status.color [true|false]       Color the Status word (Default: true; terminal only,
                                      off if NO_COLOR is set or TERM=dumb)
   sd.watch.notify-command [string]   Shell command run for each change 'git sd watch' sees
-                                     (details in GIT_SD_* environment variables; see SPEC.md)
+                                     (the GIT_SD_* variables it receives: 'git sd notify-test')
   sd.watch.min-interval [duration]   Fastest 'git sd watch' poll (Default: 5s)
   sd.watch.max-interval [duration]   Slowest poll while nothing changes (Default: 60s)
   sd.base-branch [string]            Upstream branch to target instead of main/master, as
@@ -104,5 +113,5 @@ native Stacks async-merge API and whatever branch protection is configured
 on the repo — git-sd does not check approvals or CI status itself.
 
 Note: Use 'git config' for project config or 'git config --global' for home config.
-`)
+`
 }
