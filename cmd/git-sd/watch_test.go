@@ -381,8 +381,11 @@ func TestWatcherOnATerminalRedrawsAndRingsTheBell(t *testing.T) {
 	if !strings.Contains(text, "watching 1 PR(s) · checked 15:00:") || !strings.Contains(text, "next check in") || !strings.Contains(text, "Ctrl-C to stop") {
 		t.Errorf("the footer says what is going on:\n%s", text)
 	}
-	if !strings.Contains(text, "Review → CI failed") {
-		t.Errorf("the recent-changes log is shown on screen:\n%s", text)
+	if strings.Contains(text, "Review → CI failed") || strings.Contains(text, "PR #1") {
+		t.Errorf("the screen is status's table and a footer, with no history of changes:\n%s", text)
+	}
+	if !strings.Contains(text, ui.FormatTable(snapOf(pr(1, ui.CIFailed)).Header, snapOf(pr(1, ui.CIFailed)).Rows)) {
+		t.Errorf("the latest table is on screen:\n%s", text)
 	}
 	if bell.String() != "\a" {
 		t.Errorf("the bell rings once for the one cycle with a change, got %q", bell.String())

@@ -24,7 +24,6 @@ const (
 	watchCIMaxInterval = 20 * time.Second
 	// watchOutageAfter is how many failed polls in a row count as an outage.
 	watchOutageAfter   = 3
-	watchRecentEvents  = 8
 	watchNotifyTimeout = 10 * time.Second
 )
 
@@ -376,21 +375,16 @@ func (w *watcher) render(snap watchSnapshot) string {
 func (w *watcher) run(ctx context.Context) error {
 	interval := w.minInterval
 	var prev []watchedPR
-	var recent []string
 	var latest watchSnapshot // the last good snapshot: what is on screen
 	have := false            // a baseline has been taken
 	failures, outage := 0, false
 	var lastChecked string
 	say := func(line string) {
 		line = w.stamp() + "  " + line
-		if !w.tty {
-			fmt.Fprintln(w.out, line)
-			return
+		if w.tty {
+			return // the screen is status's table and a footer: no history (the bell and notifications carry changes)
 		}
-		recent = append(recent, line)
-		if len(recent) > watchRecentEvents {
-			recent = recent[len(recent)-watchRecentEvents:]
-		}
+		fmt.Fprintln(w.out, line)
 	}
 	for {
 		snap, err := w.snapshot()
@@ -451,9 +445,6 @@ func (w *watcher) run(ctx context.Context) error {
 		if w.tty {
 			fmt.Fprint(w.out, "\x1b[H\x1b[2J")
 			fmt.Fprint(w.out, w.render(latest))
-			for _, line := range recent {
-				fmt.Fprintln(w.out, line)
-			}
 			state := fmt.Sprintf("watching %d PR(s) · checked %s", len(prev), lastChecked)
 			if outage {
 				state = "GitHub unreachable, retrying · last good check " + lastChecked
