@@ -387,6 +387,18 @@ watch
                "Cannot reach GitHub (...); still watching, will keep retrying."
                after 3 failed polls in a row, and "Back online.". Ends with
                "Stopped watching." (exit 0) on Ctrl-C/SIGTERM.
+  One watch:   Only one watch runs per repository: a second refuses with
+               "Error: another git sd watch is already running ... (pid <n>,
+               started <time>)" and the lock file's path
+               (.git/sd/watch.pid), which can be removed if that watch is gone.
+  Other commands: While a watch runs in the same repository, status and
+               track/assign/move/fixup/sync/merge/rebase ask it to check
+               now (they touch .git/sd/watch.pid): it polls at once and
+               keeps its schedule (the wait only restarts from the
+               minimum if the check finds a change). It still announces
+               what it finds as usual, so a change status just showed you
+               may be announced too. With no watch running they do
+               nothing extra.
   Notify:      Terminal bell once per cycle with changes (terminal only), and
                'sd.watch.notify-command' (run with sh -c per change, with the
                GIT_SD_* environment variables listed under 'notify-test'

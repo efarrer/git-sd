@@ -103,6 +103,17 @@ func nextWatchInterval(current time.Duration, changed, ciRunning bool, minI, max
 	return min(next, limit)
 }
 
+// holdWatchInterval is the wait after an extra poll that another command asked
+// for and that found nothing new: the schedule is left as it was (not doubled,
+// not reset), still held under the ceiling that applies while CI is running.
+func holdWatchInterval(current time.Duration, ciRunning bool, minI, maxI time.Duration) time.Duration {
+	limit := maxI
+	if ciRunning && limit > watchCIMaxInterval {
+		limit = watchCIMaxInterval
+	}
+	return min(max(current, minI), limit)
+}
+
 // ---------------------------------------------------------------- events
 
 // eventKind names a transition for GIT_SD_EVENT.
@@ -367,6 +378,7 @@ type watcher struct {
 	tty                      bool
 	snapshot                 func() (watchSnapshot, error)
 	sleep                    func(ctx context.Context, d time.Duration) bool // false once ctx is done
+	rung                     func() bool                                     // another command asked for a check now (consumes the request)
 	now                      func() time.Time
 	notifier                 *notifier
 }
@@ -399,6 +411,7 @@ func (w *watcher) run(ctx context.Context) error {
 		fmt.Fprintln(w.out, line)
 	}
 	for {
+		poked := w.rung != nil && have && w.rung() // another command rang: this poll restarts the cadence
 		snap, err := w.snapshot()
 		changed := false
 		switch {
@@ -453,7 +466,11 @@ func (w *watcher) run(ctx context.Context) error {
 				ciRunning = true
 			}
 		}
-		interval = nextWatchInterval(interval, changed, ciRunning, w.minInterval, w.maxInterval)
+		if poked && !changed {
+			interval = holdWatchInterval(interval, ciRunning, w.minInterval, w.maxInterval)
+		} else {
+			interval = nextWatchInterval(interval, changed, ciRunning, w.minInterval, w.maxInterval)
+		}
 		if w.tty {
 			fmt.Fprint(w.out, "\x1b[H\x1b[2J")
 			fmt.Fprint(w.out, w.render(latest))
@@ -472,9 +489,13 @@ func (w *watcher) run(ctx context.Context) error {
 
 // sleepWall waits d, checking the wall clock every second so that after a
 // laptop wakes the next poll is immediate instead of up to a full interval late.
-func sleepWall(ctx context.Context, d time.Duration) bool {
+// wake is asked once a second too; when it says true the wait ends early.
+func sleepWall(ctx context.Context, d time.Duration, wake func() bool) bool {
 	deadline := time.Now().Round(0).Add(d)
 	for {
+		if wake != nil && wake() {
+			return ctx.Err() == nil // rung by another command: poll now
+		}
 		remaining := time.Until(deadline.Round(0))
 		remaining = deadline.Sub(time.Now().Round(0))
 		if remaining <= 0 {
@@ -525,6 +546,11 @@ func runWatch(args []string) {
 		fmt.Printf("Error: %v\n", err)
 		exitCleanly(1)
 	}
+	release, err := acquireWatch() // one watch per repository; also the doorbell other commands ring
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		exitCleanly(1)
+	}
 	tty := stdoutIsTerminal()
 	n := &notifier{command: strings.TrimSpace(git.ConfigGetWithDefault("sd.watch.notify-command", "")), out: os.Stdout, run: runNotifyCommand}
 	if tty {
@@ -536,9 +562,14 @@ func runWatch(args []string) {
 	w := &watcher{
 		minInterval: minI, maxInterval: maxI, out: os.Stdout, tty: tty,
 		snapshot: func() (watchSnapshot, error) { return takeWatchSnapshot(columns, color) },
-		sleep:    sleepWall, now: time.Now, notifier: n,
+		now:      time.Now, notifier: n,
 	}
-	if err := w.run(ctx); err != nil {
+	feed := newRingFeed() // other commands ring it by touching watch.pid
+	w.rung = feed.take
+	w.sleep = func(ctx context.Context, d time.Duration) bool { return sleepWall(ctx, d, feed.changed) }
+	err = w.run(ctx)
+	release()
+	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		exitCleanly(1)
 	}

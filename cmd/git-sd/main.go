@@ -8,12 +8,17 @@ import (
 
 func main() {
 	defer timing.Report(os.Stderr) // GIT_SD_TIMING=1; exits go through exitCleanly, which reports too
+	defer ringWatch()              // tell a running watch this command changed something (runs before the report)
 	if len(os.Args) < 2 {
 		showUsage()
 		exitCleanly(0)
 	}
 
 	command := os.Args[1]
+	switch command {
+	case "track", "assign", "move", "fixup", "sync", "merge", "rebase":
+		ringBy = command
+	}
 	switch command {
 	case "track", "status", "assign", "sync", "move", "fixup", "merge", "rebase":
 		if reconcilePending() {

@@ -224,7 +224,16 @@ runs
 if set, with the details in
 .B GIT_SD_*
 environment variables, so it can show a desktop notification. GitHub being
-unreachable is retried and announced, not fatal.
+unreachable is retried and announced, not fatal. Only one watch runs per repository: a second one refuses to start and names the
+lock file,
+.BR .git/sd/watch.pid ,
+which can be removed if the first is gone. While a watch is running,
+.B status
+and the commands that change something ask it to check now: it polls at once
+without changing its schedule (the wait restarts from the minimum only if the check finds a change). It still announces what it finds as
+usual, so a change that
+.B status
+just showed may be announced too.
 .TP
 .B notify-test [--from \fIstate\fR] [--to \fIstate\fR] [--offline] [--list]
 Try

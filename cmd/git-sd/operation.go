@@ -87,6 +87,7 @@ func endOperation() {
 // exitCleanly is os.Exit that first releases the lock (os.Exit skips defers).
 func exitCleanly(code int) {
 	endOperation()
+	ringWatch()
 	timing.Report(os.Stderr)
 	os.Exit(code)
 }

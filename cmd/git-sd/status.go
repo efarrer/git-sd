@@ -67,6 +67,7 @@ func runStatus(args []string) {
 			fmt.Printf("Note: a git sd %s is running and has the branch temporarily rearranged; run status again in a moment.\n", op.Command)
 		}
 		fmt.Printf("No local commits found since %s.\n", view.BaseBranch)
+		touchWatch()
 		return
 	}
 	for _, w := range view.Warnings {
@@ -85,6 +86,8 @@ func runStatus(args []string) {
 	for _, w := range view.Failures.warnings() {
 		fmt.Fprintln(os.Stderr, w)
 	}
+
+	touchWatch() // a running watch checks now, so its table matches what was just shown
 }
 
 // statusFailure is an error from buildStatusView that carries the exact line

@@ -413,10 +413,10 @@ func TestNotifierRunsRealCommandsAndWarnsOnce(t *testing.T) {
 func TestSleepWallStopsWhenCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if sleepWall(ctx, time.Minute) {
+	if sleepWall(ctx, time.Minute, nil) {
 		t.Error("a cancelled sleep reports false")
 	}
-	if !sleepWall(context.Background(), 20*time.Millisecond) {
+	if !sleepWall(context.Background(), 20*time.Millisecond, nil) {
 		t.Error("a completed sleep reports true")
 	}
 }
