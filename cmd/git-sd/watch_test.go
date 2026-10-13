@@ -430,8 +430,9 @@ func TestFooterLine(t *testing.T) {
 		{20 * time.Second, "next check in 20s"},
 		{19400 * time.Millisecond, "next check in 19s"},
 		{time.Minute, "next check in 1m0s"},
-		{300 * time.Millisecond, "next check in 0s"},
-		{-time.Second, "next check in 0s"},
+		{300 * time.Millisecond, "checking now"},
+		{0, "checking now"},
+		{-time.Second, "checking now"},
 	} {
 		want := state + " · " + c.want + " · Ctrl-C to stop"
 		if got := footerLine(state, c.remaining); got != want {
@@ -510,5 +511,8 @@ func TestSleepWallTicksEverySecondWithTheTimeLeft(t *testing.T) {
 		if left[i] >= left[i-1] {
 			t.Errorf("the time left must keep decreasing, got %v", left)
 		}
+	}
+	if left[len(left)-1] != 0 {
+		t.Errorf("the countdown must reach 0 when the wait ends, got %v", left)
 	}
 }

@@ -492,9 +492,14 @@ func (w *watcher) run(ctx context.Context) error {
 	}
 }
 
-// footerLine is the terminal footer: the state, and the time left to the next check.
+// footerLine is the terminal footer: the state, and the time left to the next
+// check (or "checking now" once it is due).
 func footerLine(state string, remaining time.Duration) string {
-	return fmt.Sprintf("%s · next check in %s · Ctrl-C to stop", state, max(remaining, 0).Round(time.Second))
+	left := max(remaining, 0).Round(time.Second)
+	if left == 0 {
+		return state + " · checking now · Ctrl-C to stop" // the poll takes a second or two
+	}
+	return fmt.Sprintf("%s · next check in %s · Ctrl-C to stop", state, left)
 }
 
 // countdown rewrites the footer line in place with the time left. Terminal only.
@@ -507,7 +512,8 @@ func (w *watcher) countdown(remaining time.Duration) {
 // sleepWall waits d, checking the wall clock every second so that after a
 // laptop wakes the next poll is immediate instead of up to a full interval late.
 // wake is asked once a second too; when it says true the wait ends early. tick,
-// if not nil, is told the time left each time, first before waiting at all.
+// if not nil, is told the time left each time, first before waiting at all and
+// finally with 0 when the wait ends (not when it is cut short by a ring).
 func sleepWall(ctx context.Context, d time.Duration, wake func() bool, tick func(remaining time.Duration)) bool {
 	deadline := time.Now().Round(0).Add(d)
 	for {
@@ -517,6 +523,9 @@ func sleepWall(ctx context.Context, d time.Duration, wake func() bool, tick func
 		remaining := time.Until(deadline.Round(0))
 		remaining = deadline.Sub(time.Now().Round(0))
 		if remaining <= 0 {
+			if tick != nil {
+				tick(0) // the wait is over: show 0s while the check runs
+			}
 			return ctx.Err() == nil
 		}
 		if tick != nil {

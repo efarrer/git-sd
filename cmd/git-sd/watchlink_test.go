@@ -229,6 +229,12 @@ func TestSleepWallWakesEarlyWhenRung(t *testing.T) {
 	if time.Since(start) > 500*time.Millisecond {
 		t.Errorf("a ring wakes it at once, took %v", time.Since(start))
 	}
+	// A ring cuts the wait short: that is not "0s".
+	var ticks []time.Duration
+	sleepWall(context.Background(), time.Hour, func() bool { return true }, func(r time.Duration) { ticks = append(ticks, r) })
+	if len(ticks) != 0 {
+		t.Errorf("a wait ended by a ring must not report 0, got %v", ticks)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if sleepWall(ctx, time.Hour, func() bool { return true }, nil) {
