@@ -14,18 +14,15 @@ With Go (1.26.2 or newer):
 go install github.com/efarrer/git-sd/cmd/git-sd@latest
 ```
 This puts `git-sd` in `$(go env GOBIN)` (by default `~/go/bin`; make sure that
-directory is on your `PATH`), and git then runs it as `git sd`. `git sd -h` and
-`git sd --agent` work straight away, since the binary prints them itself;
-`git sd --help` opens the man page, which this method does not install.
+directory is on your `PATH`), and git then runs it as `git sd`. From a checkout,
+`make build` builds `./git-sd`.
 
-From a checkout, to install the binary and the man page too:
-```bash
-make install
-# Installs the binary and man page under /usr/local by default.
-# Override the location with: make install PREFIX=~/.local
-```
-With the man page installed, `git sd --help` works (it opens the man page, same
-as `git commit --help`).
+### Help
+There is no man page; the binary prints everything itself: `git sd -h` is the
+short summary, `git sd help` (or `git-sd --help`) the full manual, and
+`git sd --agent` the complete reference for scripts and agents. (`git sd --help`
+does not work: git handles `--help` for its subcommands itself, by looking for a
+man page.)
 
 ### Basic Workflow
 1. **Track:** Run `git sd track` to add `git-sd-id` trailers to new commits (or just run `git sd status` first — it's read-only and shows which commits still need tracking).

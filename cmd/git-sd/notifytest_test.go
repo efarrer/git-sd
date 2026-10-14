@@ -2,7 +2,6 @@ package main
 
 import (
 	"github.com/efarrer/git-sd/internal/ui"
-	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -160,12 +159,8 @@ func TestRunNotifyCommandCaptureShowsOutputAndFailure(t *testing.T) {
 // The tool describes itself: nothing the installed program prints or ships as
 // its manual may send the reader to a project document they don't have.
 func TestToolOutputIsSelfContained(t *testing.T) {
-	man, err := os.ReadFile("../../git-sd.1")
-	if err != nil {
-		t.Fatal(err)
-	}
 	docs := []string{"SPEC.md", "DESIGN.md", "TASKS.md", "BUGS.md", "DEVELOPMENT.md", "the SPEC"}
-	texts := map[string]string{"git sd (usage)": usageText(), "git sd --agent": agentUsageText(), "git-sd.1": string(man)}
+	texts := map[string]string{"git sd (usage)": usageText(), "git sd --agent": agentUsageText(), "git sd help": manualText()}
 	for name, text := range texts {
 		for _, doc := range docs {
 			if strings.Contains(text, doc) {
@@ -178,7 +173,7 @@ func TestToolOutputIsSelfContained(t *testing.T) {
 		t.Errorf("--agent has an unfilled placeholder")
 	}
 	for _, v := range notifyVariables {
-		for _, name := range []string{"git sd --agent", "git-sd.1"} {
+		for _, name := range []string{"git sd --agent", "git sd help"} {
 			if !strings.Contains(texts[name], v.Name) {
 				t.Errorf("%s does not document %s", name, v.Name)
 			}
@@ -190,11 +185,31 @@ func TestToolOutputIsSelfContained(t *testing.T) {
 		}
 	}
 	for _, want := range []string{"notify-send", "osascript", "BurntToast", "$GIT_SD_TITLE"} {
-		if !strings.Contains(agent, want) || !strings.Contains(string(man), want) {
-			t.Errorf("the desktop notification examples (%s) belong in --agent and the man page", want)
+		if !strings.Contains(agent, want) || !strings.Contains(texts["git sd help"], want) {
+			t.Errorf("the desktop notification examples (%s) belong in --agent and the manual", want)
 		}
 	}
 	if !strings.Contains(usageText(), "notify-test") {
 		t.Errorf("the usage lists notify-test")
+	}
+}
+
+func TestManualIsCompleteAndFilledIn(t *testing.T) {
+	m := manualText()
+	if !strings.HasPrefix(m, "NAME\n") || strings.Contains(m, "{{") || strings.Contains(m, "GIT-SD(1)") {
+		t.Errorf("the manual starts at NAME, with no placeholders or man-page header left:\n%.200s", m)
+	}
+	for _, want := range []string{"SYNOPSIS", "COMMANDS", "CONFIGURATION", "EXIT STATUS", "notify-test", "sd.watch.notify-command", "git sd help"} {
+		if !strings.Contains(m, want) {
+			t.Errorf("the manual lacks %q", want)
+		}
+	}
+	if strings.Contains(m, "Open this manual page") || strings.Contains(m, ".SH") || strings.Contains(m, "\\fB") {
+		t.Errorf("no man-page wording or roff left over")
+	}
+	for _, line := range strings.Split(m, "\n") {
+		if len([]rune(line)) > 120 && !strings.Contains(line, "git config sd.watch.notify-command") && !strings.HasPrefix(strings.TrimSpace(line), "GIT_SD_") {
+			t.Errorf("an over-long line in the manual: %q", line)
+		}
 	}
 }

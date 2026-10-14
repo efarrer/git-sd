@@ -20,7 +20,7 @@ type notifyVariable struct {
 
 // notifyVariables is the single list of what the notify command receives: the
 // event builders in watch.go follow it, and `notify-test`, `--agent` and the
-// man page all show it, so the documentation cannot drift from the code.
+// manual all show it, so the documentation cannot drift from the code.
 var notifyVariables = []notifyVariable{
 	{"GIT_SD_TITLE", "a short headline, for a notification title", false},
 	{"GIT_SD_MESSAGE", "a sentence naming the PR and what happened, with its title", false},

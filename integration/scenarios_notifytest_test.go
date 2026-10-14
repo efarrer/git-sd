@@ -101,3 +101,34 @@ func TestSDNotifyTestExplainsAndRunsTheCommand(t *testing.T) {
 		}
 	}
 }
+
+// `git-sd --help` and `git-sd help` print the whole manual; -h the short usage.
+// (`git sd --help` itself never reaches the binary: git looks for a man page.)
+func TestSDHelpPrintsTheManual(t *testing.T) {
+	t.Parallel()
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command(gitSDPath, args...)
+		cmd.Dir = t.TempDir() // not a repository: help needs none
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git-sd %v: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+	manual, viaHelp := run("--help"), run("help")
+	if manual != viaHelp {
+		t.Errorf("--help and help print the same manual")
+	}
+	for _, want := range []string{"NAME\n", "COMMANDS", "notify-test", "GIT_SD_TITLE", "BurntToast", "sd.watch.max-interval", "EXIT STATUS"} {
+		if !strings.Contains(manual, want) {
+			t.Errorf("the manual lacks %q", want)
+		}
+	}
+	if short := run("-h"); !strings.HasPrefix(short, "usage: git sd <command>") || len(short) >= len(manual) {
+		t.Errorf("-h is the short usage, got:\n%.200s", short)
+	}
+	if strings.Contains(manual, "SPEC.md") || strings.Contains(manual, "man page") && strings.Contains(manual, "Open this") {
+		t.Errorf("the manual must stand on its own")
+	}
+}

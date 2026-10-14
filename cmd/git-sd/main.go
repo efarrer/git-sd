@@ -50,7 +50,9 @@ func main() {
 		runWatch(os.Args[2:])
 	case "notify-test":
 		runNotifyTest(os.Args[2:])
-	case "help", "--help", "-h":
+	case "help", "--help":
+		fmt.Print(manualText())
+	case "-h":
 		showUsage()
 	case "--agent":
 		showAgentUsage()
@@ -90,7 +92,9 @@ Commands:
                 default Review to Approved), --offline, --list (event kinds)
 
 Options:
-  --help      Show this help message
+  help        Show the full manual (git-sd --help does the same; 'git sd --help'
+              is answered by git itself, which looks for a man page)
+  -h          Show this short summary
   --agent     Print a detailed, complete command reference for agents
 
 Configuration (via git config):
