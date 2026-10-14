@@ -18,19 +18,34 @@ func manualText() string {
 }
 
 const manual = `NAME
-       git-sd - manage a stacked-diff workflow with GitHub Pull Requests
+       git-sd - stacked diffs on GitHub: many streams of work, one branch
 
 SYNOPSIS
        git sd command [args...]
 
 DESCRIPTION
-       git-sd manages a stacked-diff workflow: a linear sequence of commits on
-       the current branch. Each commit is referenced everywhere by its 0-based
-       physical position in git sd status output (the "Index" column), not by
-       hash or git-sd-id -- physical order is the source of truth. Commits may
-       be grouped into a named Stack Set (1-10 alphanumeric/hyphen characters)
-       and pushed as GitHub Pull Requests, one PR per top-level commit plus any
-       sub-commits folded into it.
+       git-sd does stacked diffs on GitHub: it turns a large change into a
+       chain of small, dependent Pull Requests and lets you keep working on top
+       of them while they are reviewed. It does the same for several unrelated
+       pieces of work at once, all on your one local branch (main/master): a
+       feature, an unrelated bug fix and a side project each become their own
+       independent stack of PRs, so you never create, switch or rebase branches
+       to keep them apart. Commits are grouped into named Stack Sets; commits
+       that depend on each other belong in the same Stack Set (assign refuses a
+       set that would not apply on its own).
+
+       An urgent fix in the middle of a feature, all on the one branch:
+
+              git commit -m "Fix nil check in loader"
+              git sd assign hotfix:3     # the index comes from git sd status
+              git sd sync hotfix         # a separate PR, based on main
+
+       Your commits are a linear sequence on the current branch. Each commit is
+       referenced everywhere by its 0-based physical position in git sd status
+       output (the "Index" column), not by hash or git-sd-id -- physical order
+       is the source of truth. A Stack Set (1-10 alphanumeric/hyphen
+       characters) is pushed as GitHub Pull Requests, one PR per top-level
+       commit plus any sub-commits folded into it.
 
        Every command except status prints exactly one line of output on success.
        Errors print one or more lines starting with "Error: " and set a non-zero

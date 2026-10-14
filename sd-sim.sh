@@ -64,6 +64,10 @@ show_usage() {
     cat <<EOF
 usage: git sd <command> [<args>]
 
+Stacked diffs on GitHub, for several streams of work at once: commit on your
+one local branch, group commits into Stack Sets, and git-sd turns each set
+into its own stack of PRs. 'git sd help' prints the full manual.
+
 Commands:
   status      List commits and their Stack Set/PR status
                 Options: --legend, --no-legend

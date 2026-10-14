@@ -1,6 +1,33 @@
 # Stacked Diff CLI Tool (git-sd)
 
-`git-sd` is a command-line tool designed to enable a "stacked diff" workflow with GitHub, allowing developers to manage a series of dependent pull requests efficiently on a single branch.
+`git-sd` is a command-line tool for stacked diffs on GitHub: it turns a large change into a chain of small, dependent pull requests and lets you keep working on top of them while they are reviewed. It does the same for several unrelated pieces of work at once, all on your one local branch (main/master): a feature, an unrelated bug fix and a side project each become their own independent stack of PRs, so you never create, switch or rebase branches to keep them apart.
+
+## Why git-sd
+
+- **Stacks.** A big change becomes a chain of small, reviewable PRs, each building on the one before. You keep coding on top of PRs that are still under review, and you address review feedback with `git sd fixup` instead of juggling branches.
+- **Streams.** You group commits into named *Stack Sets* with `git sd assign`, and each Stack Set is its own independent stack of PRs. A feature, an unrelated bug fix and a side project can all be in flight at once on your one local branch, and be reviewed, reordered and merged in any order. Your local branch is never pushed: git-sd creates and names the PR branches for you.
+
+### An urgent fix in the middle of a feature
+
+Without git-sd you stash, branch, fix, push, open a PR, switch back, unstash, and rebase later:
+
+```bash
+git stash
+git switch -c hotfix origin/main
+# ...fix, commit...
+git push -u origin hotfix && gh pr create
+git switch feature && git stash pop
+```
+
+With git-sd everything stays on your one branch:
+
+```bash
+git commit -m "Fix nil check in loader"   # lands next to your feature commits
+git sd assign hotfix:3                    # the index comes from `git sd status`
+git sd sync hotfix                        # a separate PR, based on main
+```
+
+This works because the two pieces of work are independent, and git-sd checks that when you assign: it refuses a Stack Set whose commits depend on another set's change (or on an unassigned commit), so commits that depend on each other belong in the same Stack Set.
 
 ## Quick Start
 

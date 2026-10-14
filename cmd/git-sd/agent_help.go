@@ -22,18 +22,35 @@ func agentUsageText() string {
 	).Replace(`git-sd agent reference
 
 OVERVIEW
-  git-sd manages a stacked-diff workflow: a linear sequence of commits on the
-  current branch. Each commit is referenced everywhere by its 0-based
-  PHYSICAL POSITION in 'git sd status' output (the "Index" column), NOT by
-  hash or git-sd-id — physical order is the source of truth. Commits may be
-  grouped into a named "Stack Set" (1-10 alphanumeric/hyphen characters) and
-  pushed as GitHub Pull Requests, one PR per top-level commit (plus any
-  sub-commits folded into it).
+  git-sd does stacked diffs on GitHub, for several independent streams of work
+  at once on ONE local branch. The commits on the current branch (the local
+  copy of the base branch, e.g. main) are a linear sequence. Each commit is
+  referenced everywhere by its 0-based PHYSICAL POSITION in 'git sd status'
+  output (the "Index" column), NOT by hash or git-sd-id — physical order is
+  the source of truth. Commits are grouped into named "Stack Sets" (1-10
+  alphanumeric/hyphen characters); each Stack Set is pushed as its own
+  independent stack of GitHub Pull Requests, one PR per top-level commit (plus
+  any sub-commits folded into it).
+
+WORKFLOW MODEL (read this before acting)
+  - Work on the current branch only. Do NOT create, switch or rebase branches
+    to separate unrelated work (a feature, an unrelated fix, a side project):
+    commit it on the current branch and give it its own Stack Set with
+    'git sd assign <set>:<index>'. git-sd creates and names the PR branches
+    itself and never pushes the local branch.
+  - Each Stack Set is independent: its PRs are based on the base branch (or
+    on the previous PR of the same set), never on another set's, so sets can
+    be reviewed, reordered ('move') and merged in any order.
+  - Commits that depend on each other must be in the same Stack Set: 'assign'
+    refuses a set whose commits depend on another set's change or on an
+    unassigned commit.
+  - Example, an urgent fix in the middle of a feature: commit the fix, then
+    'git sd assign hotfix:<index of the fix>' and 'git sd sync hotfix'.
 
 GLOBAL CONVENTIONS
   - Exit code 0 on success, non-zero on any error.
   - Every command except 'status' prints exactly one line of output on
-    success (e.g. "Commits tracked."). Errors print one or more lines
+    success (e.g. "Commits assigned successfully."). Errors print one or more lines
     starting with "Error: " (or "Warning: " for non-fatal issues) and set a
     non-zero exit code. A conflict during 'move'/'fixup' leaves a git
     rebase in progress for manual resolution ('git rebase --continue' to

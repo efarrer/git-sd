@@ -1,7 +1,7 @@
 # Stacked Diff CLI Tool (git-sd) - Specification
 
 ## Overview
-A command-line tool designed to enable a "stacked diff" workflow with GitHub, allowing developers to manage a series of dependent pull requests efficiently.
+A command-line tool for stacked diffs on GitHub: it turns a large change into a chain of small, dependent pull requests and lets developers keep working on top of them while they are reviewed. It does the same for several unrelated pieces of work at once, all on one local branch (main/master): a feature, an unrelated bug fix and a side project each become their own independent stack of PRs, so no branches need to be created, switched or rebased to keep them apart.
 
 ## Terminology
 This document uses "stack" at three distinct levels of specificity — worth disambiguating up front now that the middle and last both refer to concrete, literal things, not just the general pattern:
@@ -36,6 +36,7 @@ This document uses "stack" at three distinct levels of specificity — worth dis
 - Submitting a "stack" of branches as individual, dependent PRs.
 - Updating intermediate branches in a stack and propagating changes.
 - Syncing the stack with the upstream main branch.
+- Working on several independent streams at once on a single branch (a feature, an unrelated bug fix, a side project), each its own Stack Set with its own stack of PRs, with no branch creation, switching or rebasing to keep them apart.
 
 ## Stacked Diff Workflow Principles
 The "stacked diff" workflow is a development pattern where large features are broken into a sequence of small, dependent commits, each represented by its own Pull Request (PR).
@@ -44,6 +45,7 @@ The "stacked diff" workflow is a development pattern where large features are br
 - **Branch Chaining:** Creating a chain of branches where `Branch B` has its "base" set to `Branch A`, rather than the main branch.
 - **Recursive Rebasing:** If an early branch in the stack is updated, all subsequent branches in the stack must be rebased to incorporate the changes.
 - **Atomic PRs:** Each PR in the stack should be a self-contained, logical unit of work.
+- **Independent Stack Sets (streams):** several unrelated pieces of work can be in flight at once on one local branch. Each Stack Set's PRs are based on the base branch or on the previous PR of the SAME set, never on another set's; Stack Sets may be interleaved in local history and are reordered, merged, reconciled (`rebase`) or abandoned independently of one another; the local branch itself is never pushed (git-sd creates and names the PR branches). Independence is checked, not assumed: `assign` refuses a set whose commits depend on another set's change or on an unassigned commit (see "Cross-Set Dependency Validation"), so commits that depend on each other belong in the same Stack Set.
 - **Velocity:** Developers can continue working on top of their previous changes without waiting for PR approval.
 
 ### Enhancement: Stack Sets
