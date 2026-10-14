@@ -516,3 +516,138 @@ func TestSleepWallTicksEverySecondWithTheTimeLeft(t *testing.T) {
 		t.Errorf("the countdown must reach 0 when the wait ends, got %v", left)
 	}
 }
+
+// ------------------------------------------------ PRs that leave the view
+
+// lookups returns a stub for watcher.lookup that answers from a map and records who was asked.
+func lookups(answers map[int]ui.MarkerID, asked *[]int) func(int) (ui.MarkerID, error) {
+	return func(n int) (ui.MarkerID, error) {
+		*asked = append(*asked, n)
+		if m, ok := answers[n]; ok {
+			return m, nil
+		}
+		return "", errors.New("lookup failed")
+	}
+}
+
+func TestVanishedPRThatWasMergedIsAnnouncedFromTheLastKnownState(t *testing.T) {
+	w, out, _, _, rec := harness([]watchStep{
+		{snap: snapOf(pr(1, ui.Approved), pr(2, ui.Review))},
+		{snap: snapOf(pr(1, ui.Approved))}, // PR 2's commit was dropped by a rebase
+	}, false)
+	var asked []int
+	w.lookup = lookups(map[int]ui.MarkerID{2: ui.Merged}, &asked)
+	if err := w.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "s 2/3  PR #2  Review → Merged  Title 2") || len(rec.runs) != 1 {
+		t.Errorf("the merge the watch never saw is announced once, like any change:\n%s\n%v", out.String(), rec.runs)
+	}
+	if got := strings.Count(out.String(), "→"); got != 1 {
+		t.Errorf("only the merge is announced, not the removal, got %d changes:\n%s", got, out.String())
+	}
+	if len(asked) != 1 || asked[0] != 2 {
+		t.Errorf("only the vanished PR is looked up, got %v", asked)
+	}
+}
+
+func TestVanishedPRAlreadyKnownAsMergedNeedsNoLookup(t *testing.T) {
+	for _, last := range []ui.MarkerID{ui.Merged, ui.Closed} {
+		w, out, _, _, rec := harness([]watchStep{
+			{snap: snapOf(pr(1, ui.Approved), pr(2, last))},
+			{snap: snapOf(pr(1, ui.Approved))},
+		}, false)
+		var asked []int
+		w.lookup = lookups(map[int]ui.MarkerID{2: ui.Merged}, &asked)
+		if err := w.run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if len(asked) != 0 || strings.Contains(out.String(), "→") || len(rec.runs) != 0 {
+			t.Errorf("a PR already announced as %s leaves quietly: asked %v\n%s", last, asked, out.String())
+		}
+	}
+}
+
+func TestVanishedPRThatIsStillOpenOrUnknownIsSilent(t *testing.T) {
+	for name, answers := range map[string]map[int]ui.MarkerID{
+		"still open":        {2: ui.Review},
+		"lookup failed":     {},
+		"changes requested": {2: ui.Changes},
+	} {
+		w, out, _, _, rec := harness([]watchStep{
+			{snap: snapOf(pr(1, ui.Approved), pr(2, ui.Review))},
+			{snap: snapOf(pr(1, ui.Approved))},
+		}, false)
+		var asked []int
+		w.lookup = lookups(answers, &asked)
+		if err := w.run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out.String(), "→") || len(rec.runs) != 0 {
+			t.Errorf("%s: a PR that merely left the branch is dropped silently:\n%s", name, out.String())
+		}
+	}
+}
+
+func TestVanishedPRThatWasClosedIsAnnounced(t *testing.T) {
+	w, out, _, _, _ := harness([]watchStep{
+		{snap: snapOf(pr(1, ui.Review), pr(2, ui.Draft))},
+		{snap: snapOf(pr(1, ui.Review))},
+	}, false)
+	var asked []int
+	w.lookup = lookups(map[int]ui.MarkerID{2: ui.Closed}, &asked)
+	if err := w.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "PR #2  Draft → Closed") {
+		t.Errorf("a closed PR is announced:\n%s", out.String())
+	}
+}
+
+func TestSeveralVanishedPRsAreLookedUpInStackOrder(t *testing.T) {
+	w, out, _, _, rec := harness([]watchStep{
+		{snap: snapOf(pr(1, ui.Approved), pr(2, ui.Approved), pr(3, ui.Review))},
+		{snap: snapOf(pr(3, ui.Review))},
+	}, false)
+	var asked []int
+	w.lookup = lookups(map[int]ui.MarkerID{1: ui.Merged, 2: ui.Merged}, &asked)
+	if err := w.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 2 || asked[0] != 1 || asked[1] != 2 || len(rec.runs) != 2 {
+		t.Errorf("both are looked up in stack order and announced: asked %v, notified %d\n%s", asked, len(rec.runs), out.String())
+	}
+}
+
+func TestBaselinePollAndPresentPRsNeverTriggerLookups(t *testing.T) {
+	w, _, _, _, _ := harness([]watchStep{
+		{snap: snapOf(pr(1, ui.Review), pr(2, ui.Review))},
+		{snap: snapOf(pr(1, ui.Approved), pr(2, ui.Review))},
+	}, false)
+	var asked []int
+	w.lookup = lookups(map[int]ui.MarkerID{}, &asked)
+	if err := w.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 0 {
+		t.Errorf("nothing left the view, so nothing is looked up, got %v", asked)
+	}
+}
+
+// While sync or merge has the branch rearranged the view can be empty: that must
+// not look like every PR leaving, nor like every PR being new when it ends.
+func TestUnsettledPollIsIgnored(t *testing.T) {
+	w, out, _, _, rec := harness([]watchStep{
+		{snap: snapOf(pr(1, ui.Approved), pr(2, ui.Review))},
+		{snap: watchSnapshot{Note: "No local commits found since origin/main.", unsettled: true}},
+		{snap: snapOf(pr(1, ui.Approved), pr(2, ui.Review))},
+	}, false)
+	var asked []int
+	w.lookup = lookups(map[int]ui.MarkerID{1: ui.Merged, 2: ui.Merged}, &asked)
+	if err := w.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 0 || strings.Contains(out.String(), "Now watching") || strings.Contains(out.String(), "→") || len(rec.runs) != 0 {
+		t.Errorf("an unsettled poll teaches the watch nothing: asked %v\n%s", asked, out.String())
+	}
+}

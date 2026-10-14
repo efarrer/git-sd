@@ -386,6 +386,12 @@ watch
                changes. Poll interval: 'sd.watch.min-interval' (5s) after a
                change, doubling while nothing changes up to
                'sd.watch.max-interval' (60s; 20s while CI is running).
+               A PR that leaves the branch without having been seen
+               Merged/Closed (e.g. 'rebase' dropped its landed commit before
+               the next check) is looked up once and a merge/close is
+               announced as usual; otherwise it is dropped silently (the
+               removal itself is never announced). A check taken while
+               sync/merge runs is ignored.
   Output:      On a terminal: the same table 'status' prints, redrawn in
                place, plus a footer line (its "next check in" counts
                down every second) and nothing else. Otherwise: that

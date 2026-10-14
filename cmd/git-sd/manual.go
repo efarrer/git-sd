@@ -181,8 +181,11 @@ COMMANDS
               while CI is running). A change also runs sd.watch.notify-command
               if set, with the details in GIT_SD_* environment variables, so it
               can show a desktop notification. GitHub being unreachable is
-              retried and announced, not fatal. Only one watch runs per
-              repository: a second one refuses to start and names the lock file,
+              retried and announced, not fatal. A PR that leaves the branch
+              without having been seen merged or closed (say, rebase dropped
+              its landed commit before the next check) is looked up once and
+              a merge or close is announced as usual; otherwise it is dropped
+              silently. Only one watch runs per repository: a second one refuses to start and names the lock file,
               .git/sd/watch.pid, which can be removed if the first is gone.
               While a watch is running, status and the commands that change
               something ask it to check now: it polls at once without changing

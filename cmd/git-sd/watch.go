@@ -45,6 +45,7 @@ type watchSnapshot struct {
 	Note      string      // printed instead of the table (no commits in range)
 	PRs       []watchedPR // in stack order
 	allFailed bool        // every lookup failed (GitHub or the network is unreachable)
+	unsettled bool        // taken while sync or merge was running and the branch looked empty: ignore it
 	err       error       // the first lookup error
 }
 
@@ -280,6 +281,45 @@ func diffWatch(prev, cur []watchedPR) []watchEvent {
 	return events
 }
 
+// missedEndings finds the PRs that left the view since the last poll (say,
+// `rebase` dropped their landed commits) without ever being seen Merged or
+// Closed, and looks each up once: a merge or close that the watch did not get
+// to see is returned as an event from the last state it knew. A PR that is still
+// open (it was only unassigned or moved out of range), or whose lookup fails,
+// is dropped silently, and so is the removal itself.
+func (w *watcher) missedEndings(prev, cur []watchedPR) []watchEvent {
+	if w.lookup == nil {
+		return nil
+	}
+	here := map[int]bool{}
+	for _, p := range cur {
+		here[p.Number] = true
+	}
+	var events []watchEvent
+	for _, p := range prev {
+		if here[p.Number] || p.Marker == "" || p.Marker == ui.Merged || p.Marker == ui.Closed {
+			continue
+		}
+		to, err := w.lookup(p.Number)
+		if err != nil || (to != ui.Merged && to != ui.Closed) {
+			continue
+		}
+		from := p.Marker
+		p.Marker = to
+		events = append(events, watchEvent{PR: p, From: from, To: to, Kind: eventKind(from, to)})
+	}
+	return events
+}
+
+// lookupPRMarker is the state of one PR, classified as status does.
+func lookupPRMarker(number int) (ui.MarkerID, error) {
+	info, err := getDetailedPRInfo(number)
+	if err != nil {
+		return "", err
+	}
+	return classifyPR(info), nil
+}
+
 // newWatchedPRs are the PRs in cur that prev did not have.
 func newWatchedPRs(prev, cur []watchedPR) []watchedPR {
 	seen := map[int]bool{}
@@ -377,6 +417,7 @@ type watcher struct {
 	out                      io.Writer
 	tty                      bool
 	snapshot                 func() (watchSnapshot, error)
+	lookup                   func(number int) (ui.MarkerID, error)           // the state of one PR, for ones that left the view
 	sleep                    func(ctx context.Context, d time.Duration) bool // false once ctx is done
 	footer                   string                                          // the footer without its countdown: what is rewritten each second
 	rung                     func() bool                                     // another command asked for a check now (consumes the request)
@@ -418,6 +459,8 @@ func (w *watcher) run(ctx context.Context) error {
 		switch {
 		case err != nil && !have:
 			return err
+		case err == nil && snap.unsettled:
+			// A sync or merge has the branch rearranged for a moment: learn nothing from this poll.
 		case err != nil || snap.allFailed:
 			failures++
 			if failures == watchOutageAfter && !outage {
@@ -448,6 +491,7 @@ func (w *watcher) run(ctx context.Context) error {
 				}
 			} else {
 				events := diffWatch(prev, cur)
+				events = append(events, w.missedEndings(prev, cur)...)
 				fresh := newWatchedPRs(prev, cur)
 				for _, p := range fresh {
 					say(fmt.Sprintf("Now watching PR #%d", p.Number))
@@ -554,6 +598,8 @@ func takeWatchSnapshot(columns []string, color bool) (watchSnapshot, error) {
 	snap := watchSnapshot{PRs: view.PRs, Header: view.Header, Rows: view.Rows, err: view.FirstLookupErr}
 	if view.NoCommits {
 		snap.Note = fmt.Sprintf("No local commits found since %s.", view.BaseBranch)
+		// sync briefly checks out the base commit: an empty branch then is not real.
+		snap.unsettled = activeOperation() != nil
 	}
 	snap.allFailed = view.LookupsTotal > 0 && view.LookupsFailed == view.LookupsTotal
 	if snap.allFailed && github.IsEnvError(snap.err) {
@@ -595,6 +641,7 @@ func runWatch(args []string) {
 	w := &watcher{
 		minInterval: minI, maxInterval: maxI, out: os.Stdout, tty: tty,
 		snapshot: func() (watchSnapshot, error) { return takeWatchSnapshot(columns, color) },
+		lookup:   lookupPRMarker,
 		now:      time.Now, notifier: n,
 	}
 	feed := newRingFeed() // other commands ring it by touching watch.pid
