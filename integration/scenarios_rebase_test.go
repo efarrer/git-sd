@@ -402,8 +402,8 @@ func TestSDRebaseConflictLeavesStandardRebase(t *testing.T) {
 	runGit(t, repoDir, "push", "origin", baseBranch)
 	runGit(t, repoDir, "checkout", "rbconflict-work")
 	runGit(t, repoDir, "config", "sd.base-branch", "origin/"+baseBranch)
-	runGitSD(t, repoDir, "track")
-	origHead = strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD")) // track re-tagged the commits
+	makeReady(t, repoDir)
+	origHead = strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD")) // makeReady re-tagged the commits
 
 	// 1. The conflict leaves a standard rebase in progress with a helpful message.
 	out, err := runGitSDErr(repoDir, "rebase")

@@ -23,6 +23,25 @@ type batchPushEnv struct {
 	pathDir string
 }
 
+// makeReady puts every untracked commit in range into the Ready state (tagged,
+// in no Stack Set): assign tags every untracked commit, then unassign them.
+func (e *batchPushEnv) makeReady(t *testing.T) {
+	t.Helper()
+	out, err := e.sd("status")
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	n := strings.Count(out, "Untracked")
+	if n == 0 {
+		return
+	}
+	for _, args := range [][]string{{"assign", fmt.Sprintf("rdy:0-%d", n-1)}, {"assign", fmt.Sprintf(":0-%d", n-1)}} {
+		if o, err := e.sd(args...); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, o)
+		}
+	}
+}
+
 func newBatchPushEnv(t *testing.T) *batchPushEnv {
 	t.Helper()
 	e := &batchPushEnv{t: t, root: t.TempDir()}

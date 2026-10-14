@@ -65,7 +65,6 @@ show_usage() {
 usage: git sd <command> [<args>]
 
 Commands:
-  track       Add git-sd-id trailers to untracked commits
   status      List commits and their Stack Set/PR status
                 Options: --legend, --no-legend
   assign      Assign commits to a Stack Set
@@ -100,7 +99,7 @@ EOF
 show_legend() {
     cat <<EOF
 Commit States:
-  —   Untracked   Commit has no git-sd-id; run 'git sd track' to add one.
+  —   Untracked   Commit has no git-sd-id yet; assign, move or fixup tags it.
       Ready       Commit has a git-sd-id and is ready to be assigned to a Stack Set.
                   Action: Run 'git sd assign <set-name>:<index-list>' to group it.
   📦  Assigned    Commit is assigned to a Stack Set and has no PR yet.
@@ -202,13 +201,8 @@ run_walkthrough() {
 
     header "1: Startup & Initial Status"
     type_out "git sd status"
-    info "'status' is read-only: fresh commits show as Untracked until you run 'git sd track'."
+    info "'status' is read-only: fresh commits show as Untracked until assign, move or fixup tags them."
     show_status_untracked
-    echo ""
-    type_out "git sd track"
-    echo "Commits tracked."
-    type_out "git sd status"
-    show_status_initial
     wait_for_user
 
     header "2: Configuring a Custom Base Branch (Testing)"
@@ -218,14 +212,14 @@ run_walkthrough() {
     echo "(no output; this is a plain 'git config' write)"
     type_out "git sd status"
     info "Merge-base calculations, and every PR git-sd creates or merges from here on, now target 'test-integration' instead of main."
-    show_status_initial
+    show_status_untracked
     wait_for_user
 
     header "3: Displaying the Legend"
     type_out "git sd status --legend"
     show_legend
     echo ""
-    show_status_initial
+    show_status_untracked
     wait_for_user
 
     header "4: Stack Set Assignment"

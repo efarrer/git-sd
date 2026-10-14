@@ -56,7 +56,7 @@ type Marker struct {
 
 // markers is in legend order (and, within the PR states, priority order).
 var markers = []Marker{
-	{Untracked, "—", "Untracked", ColorDim, groupCommit, "Commit has no git-sd-id; run 'git sd track' to add one.", ""},                                                                                                                                                              // untracked
+	{Untracked, "—", "Untracked", ColorDim, groupCommit, "Commit has no git-sd-id yet; assign, move or fixup tags it.", ""},                                                                                                                                                          // untracked
 	{Ready, "", "Ready", ColorDim, groupCommit, "Commit has a git-sd-id and is ready to be assigned to a Stack Set.", "Run 'git sd assign <set-name>:<index-list>' to group it."},                                                                                                    // ready
 	{Assigned, "📦", "Assigned", ColorNone, groupCommit, "Commit is assigned to a Stack Set and has no PR yet.", "Run 'git sd sync' to create/update the PR."},                                                                                                                        // assigned
 	{Unsynced, "📤", "Unsynced", ColorYellow, groupCommit, "A sub-commit that is not in its PR yet: added, changed or moved into the PR since the last sync.", "Run 'git sd sync' to put it in the PR."},                                                                              // unsynced

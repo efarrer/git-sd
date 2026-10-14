@@ -556,6 +556,21 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	return out
 }
 
+// makeReady puts every untracked commit in range into the Ready state (it has
+// a git-sd-id but belongs to no Stack Set). There is no command for that: assign
+// tags every untracked commit, so assigning them and unassigning them again leaves
+// them tagged and unassigned.
+func makeReady(t *testing.T, dir string) {
+	t.Helper()
+	out := runGitSD(t, dir, "status")
+	n := strings.Count(out, "Untracked")
+	if n == 0 {
+		return
+	}
+	runGitSD(t, dir, "assign", fmt.Sprintf("rdy:0-%d", n-1))
+	runGitSD(t, dir, "assign", fmt.Sprintf(":0-%d", n-1))
+}
+
 // runGitSDErr runs git-sd (the built binary at gitSDPath) in dir, as the
 // author identity, and returns combined output plus any error. Used by
 // negative tests that assert a command fails, or where the failure is

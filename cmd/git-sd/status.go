@@ -250,7 +250,7 @@ func buildStatusView(opts statusViewOptions) (*statusView, error) {
 
 		if id == "" {
 			// No git-sd-id yet: this commit hasn't been tracked, so there's no
-			// metadata to sync or read. Run 'git sd track' to assign one.
+			// metadata to sync or read. assign, move and fixup tag it.
 			untracked := ui.MarkerFor(ui.Untracked)
 			view.Rows = append(view.Rows, statusRow(columns, map[string]string{
 				"Icon":    untracked.Icon,

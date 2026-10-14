@@ -112,7 +112,7 @@
     - [-] **In-process `git-sd-id` trailer parsing (or a per-commit cache):** `git interpret-trailers` is spawned ~3x per commit in `status` and more in `sync`/`rebase`/`move`. Local, low risk.
     - [-] **Cache the git directory path** used by `metadata.Load`/`Save` (one `git rev-parse` per call; `rebase` saves several times).
     - [-] **Rebuild `BuildTrailerStrippedChain` with plumbing** (it checks out and runs ~7 spawns per commit, and mutates the worktree); `SimulateChainTree` already exists. Must stay hash-identical so "Everything up-to-date" detection holds; would also let groups in different sets build concurrently. Largest local change.
-    - [-] **Return the rewritten commits from `RewriteCommitsWithIDs`** to avoid a second `git log` in `track`/`assign`/`move`/`fixup`. Small, local.
+    - [-] **Return the rewritten commits from `RewriteCommitsWithIDs`** to avoid a second `git log` in `assign`/`move`/`fixup`. Small, local.
     - [ ] **Investigate:** concurrent `gh pr edit`/base retargeting in Pass 1 (small, only changed PRs are edited); one `gh pr list --json` instead of N `gh pr view` in `status` (already ~1.1 s, gain uncertain); fetching only the base branch in `rebase`.
     - `[-]` = not worth doing: profiling shows all local git work in a 4-PR `sync` totals under 0.5 s (0.2 s in `status`); revisit only if a stack is much larger or a later profile says otherwise.
     - Rejected: concurrent merges across stack sets (merge ordering on the same base can conflict).

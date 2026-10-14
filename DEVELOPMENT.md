@@ -40,7 +40,7 @@
     - Verify tool refuses to run tests if `GIT_SD_TEST_REPO` is unset or missing the marker file.
 
 2. **Commit Identification (Trailers)**
-    - `git sd track` adds `git-sd-id` trailers.
+    - `git sd assign`, `move` and `fixup` add `git-sd-id` trailers to every untracked commit in range (and nothing else does).
     - Amending/deleting commits is handled gracefully.
 
 3. **Stack Set Assignment**
@@ -60,7 +60,7 @@
     - Verify conflict handling: after a conflicting `move`/`fixup`, `git rebase --abort` restores the original order and metadata, and `git rebase --continue` yields the new order with the attachment recorded (pending-move reconcile); mutating commands refuse while the rebase is in progress.
     - Verify moving an untracked commit auto-tracks it (assigns a `git-sd-id`) instead of silently dropping the attachment.
     - `fixup <target>`: verify it attaches HEAD with an auto-computed rank, rejects an unassigned target, rejects when HEAD already has its own sub-commits, and progresses correctly across a rank-tier boundary (9 existing sub-commits -> 10th gets `"91"`).
-    - Verify `fixup` self-tracks an untracked HEAD commit (no prior `track`/`assign`/`status` call), the same way `move` does — a fresh fix commit should attach in one step, never requiring a separate tracking step first.
+    - Verify `fixup` self-tracks an untracked HEAD commit (no prior `assign`/`status` call), the same way `move` does — a fresh fix commit should attach in one step, never requiring a separate tracking step first.
 
 5. **Syncing & PR Creation**
     - `git sd sync` creates a chain of PRs and registers/extends the chain's GitHub Stack.

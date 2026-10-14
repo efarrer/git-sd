@@ -90,9 +90,6 @@ func TestSDReportsHelpfulErrorWhenGhMissingOrUnauthenticated(t *testing.T) {
 	if _, e, err := run(noGH, "help"); err != nil {
 		t.Fatalf("'help' should work without gh: %v\n%s", err, e)
 	}
-	if out, e, err := run(noGH, "track"); err != nil {
-		t.Fatalf("'track' should work without gh: %v\n%s%s", err, out, e)
-	}
 	if out, e, err := run(noGH, "assign", "sa:0", "sb:1"); err != nil {
 		t.Fatalf("'assign' should work without gh: %v\n%s%s", err, out, e)
 	}
@@ -238,28 +235,28 @@ func stepCommitIdentification(t *testing.T, repoDir string) {
 	out := runGitSD(t, repoDir, "status")
 	fmt.Println(out)
 	if !strings.Contains(out, "—") {
-		t.Fatalf("expected fresh commits to show as Untracked ('—') in status before tracking. Status output:\n%s", out)
+		t.Fatalf("expected fresh commits to show as Untracked ('—') in status before anything tagged them. Status output:\n%s", out)
 	}
-	logOutBeforeTrack := runGit(t, repoDir, "log", "-n", "3", "--format=%B")
-	if strings.Contains(logOutBeforeTrack, "git-sd-id:") {
-		t.Fatalf("status must not add trailers; found one before 'git sd track' ran")
+	logOutBefore := runGit(t, repoDir, "log", "-n", "3", "--format=%B")
+	if strings.Contains(logOutBefore, "git-sd-id:") {
+		t.Fatalf("status must not add trailers; found one before any tagging command ran")
 	}
 
-	// 3. Run 'git sd track' and verify trailers are added
-	runGitSD(t, repoDir, "track")
+	// 3. 'assign' tags every untracked commit in range: trailers appear.
+	runGitSD(t, repoDir, "assign", "feat-a:0-2")
 	logOut := runGit(t, repoDir, "log", "-n", "3", "--format=%B")
 	if !strings.Contains(logOut, "git-sd-id:") {
 		t.Fatalf("trailers were not added to commit messages")
 	}
 	fmt.Println("Trailers verified in log.")
 
-	// Regression test for B-002: running 'track' again must not duplicate trailers.
-	runGitSD(t, repoDir, "track")
+	// Regression test for B-002: tagging again (a second assign) must not duplicate trailers.
+	runGitSD(t, repoDir, "assign", "feat-a:0-2")
 	logOut2 := runGit(t, repoDir, "log", "-n", "3", "--format=%B")
 	if count := strings.Count(logOut2, "git-sd-id:"); count != 3 {
-		t.Fatalf("trailer idempotency regression (B-002): expected exactly 3 'git-sd-id:' trailers after running track twice, found %d.\nLog:\n%s", count, logOut2)
+		t.Fatalf("trailer idempotency regression (B-002): expected exactly 3 'git-sd-id:' trailers after assigning twice, found %d.\nLog:\n%s", count, logOut2)
 	}
-	fmt.Println("Trailer idempotency verified (track run twice, no duplicate trailers).")
+	fmt.Println("Trailer idempotency verified (assign run twice, no duplicate trailers).")
 }
 
 func stepStackSetAssignment(t *testing.T, repoDir string) {
@@ -384,8 +381,7 @@ func TestSDStackSetsOnOneBranchStayIsolated(t *testing.T) {
 		runGit(t, repoDir, "commit", "-m", fmt.Sprintf("Iso Commit %d", i))
 	}
 
-	// Populate git-sd-ids / indices, then assign the two sets.
-	runGitSD(t, repoDir, "track")
+	// Assign the two sets (assign tags the commits).
 	out := runGitSD(t, repoDir, "assign", "iso-a:0-1")
 	fmt.Println(out)
 	out = runGitSD(t, repoDir, "assign", "iso-b:2-3")
@@ -483,7 +479,6 @@ func TestSDSyncChainsEachStackSetIndependentlyNotOntoAnother(t *testing.T) {
 		runGit(t, repoDir, "commit", "-m", fmt.Sprintf("Chain Test %s", n))
 	}
 
-	runGitSD(t, repoDir, "track")
 	out := runGitSD(t, repoDir, "status")
 	var idxChainX, idxChainY string
 	for line := range strings.SplitSeq(out, "\n") {
@@ -740,7 +735,6 @@ func TestSDMoveToSubIndexShowsSubIndexLabel(t *testing.T) {
 	t.Parallel()
 	repoDir := newTestRepo(t)
 	makeCommits(t, repoDir, "movesub", "MoveSub Commit", 3)
-	runGitSD(t, repoDir, "track") // assign git-sd-ids
 	runGitSD(t, repoDir, "assign", "movesub:0-2")
 
 	// "MoveSub Commit 1" is at index 0 -- dest names the target's OWN index
@@ -767,7 +761,6 @@ func TestSDMoveAllowsDormantAttachmentToUnassignedTarget(t *testing.T) {
 	t.Parallel()
 	repoDir := newTestRepo(t)
 	makeCommits(t, repoDir, "dormant", "Dormant Commit", 3)
-	runGitSD(t, repoDir, "track") // assign git-sd-ids, no Stack Set assigned to any of them
 
 	out, err := runGitSDErr(repoDir, "move", "2:0.1")
 	if err != nil {
@@ -974,7 +967,6 @@ func TestSDMergeDelegatesApprovalEnforcementToGitHub(t *testing.T) {
 	runGit(t, repoDir, "add", safeguardFile)
 	runGit(t, repoDir, "commit", "-m", "Commit 8")
 
-	runGitSD(t, repoDir, "track")
 	out := runGitSD(t, repoDir, "status")
 	var idx8 string
 	for line := range strings.SplitSeq(out, "\n") {
@@ -1046,7 +1038,6 @@ func TestSDMergeSucceedsWithSecondReviewerApproval(t *testing.T) {
 	fmt.Println("--- Running Scenario: Merge Succeeds With Second Reviewer Approval ---")
 
 	makeCommits(t, repoDir, "tworev", "TwoRev Commit", 1)
-	runGitSD(t, repoDir, "track")
 	runGitSD(t, repoDir, "assign", "tworev:0")
 	runGitSD(t, repoDir, "sync", "tworev")
 
@@ -1266,7 +1257,6 @@ func TestSDAmendThenResyncUpdatesDownstreamPR(t *testing.T) {
 		runGit(t, repoDir, "commit", "-m", fmt.Sprintf("Amend Test %s", n))
 	}
 
-	runGitSD(t, repoDir, "track")
 	out := runGitSD(t, repoDir, "status")
 	var idxA, idxB string
 	for line := range strings.SplitSeq(out, "\n") {
@@ -1353,7 +1343,6 @@ func TestSDPartialMergeRetargetsNextPRBaseToMain(t *testing.T) {
 		runGit(t, repoDir, "commit", "-m", fmt.Sprintf("PartMerge %d", i))
 	}
 
-	runGitSD(t, repoDir, "track")
 	out := runGitSD(t, repoDir, "status")
 	var pmIndices []string
 	for _, n := range []string{"1", "2", "3"} {
@@ -1468,7 +1457,6 @@ func TestSDMergeUptoMergesBottomPrefixLeavingUpperPRs(t *testing.T) {
 	t.Parallel()
 	repoDir := newTestRepo(t)
 	makeCommits(t, repoDir, "uptoflag", "Upto Commit", 3)
-	runGitSD(t, repoDir, "track")
 	runGitSD(t, repoDir, "assign", "uptoflag:0-2")
 	runGitSD(t, repoDir, "status")
 	runGitSD(t, repoDir, "sync")
@@ -1643,7 +1631,6 @@ func TestSDMoveInsertsRatherThanSwaps(t *testing.T) {
 	t.Parallel()
 	repoDir := newTestRepo(t)
 	makeCommits(t, repoDir, "shifttest", "ShiftTest Commit", 4)
-	runGitSD(t, repoDir, "track")
 
 	// Move commit 0 ("ShiftTest Commit 1") to index 2. With it removed, the
 	// remaining commits are [2, 3, 4] (by subject); inserting at slot 2
@@ -1696,7 +1683,9 @@ func TestSDMoveDetectsConflictReorderingDependentCommits(t *testing.T) {
 	runGit(t, repoDir, "add", "moveconflict.txt")
 	runGit(t, repoDir, "commit", "-m", "Move Conflict Feature")
 
-	runGitSD(t, repoDir, "track")
+	// Tag the commits first: move tags untracked commits before it acts, so
+	// HEAD recorded below must already be the tagged one for the abort check.
+	makeReady(t, repoDir)
 	out := runGitSD(t, repoDir, "status")
 	var idxMoveBase, idxMoveFeature string
 	for line := range strings.SplitSeq(out, "\n") {
@@ -1752,7 +1741,6 @@ func TestSDAllFlagAppliesToEveryStackSet(t *testing.T) {
 		runGit(t, repoDir, "commit", "-m", fmt.Sprintf("Commit %d", i))
 	}
 
-	runGitSD(t, repoDir, "track")
 	out := runGitSD(t, repoDir, "status")
 	var idx6, idx7 string
 	for line := range strings.SplitSeq(out, "\n") {
@@ -1824,7 +1812,6 @@ func TestSDRebasePreservesUnmergedSurvivorAfterPartialMerge(t *testing.T) {
 	t.Parallel()
 	repoDir := newTestRepo(t)
 	makeCommits(t, repoDir, "cleanupsurv", "CleanupSurv Commit", 3)
-	runGitSD(t, repoDir, "track")
 	runGitSD(t, repoDir, "assign", "cleanupsurv:0-2")
 	runGitSD(t, repoDir, "sync", "cleanupsurv")
 
@@ -1860,7 +1847,6 @@ func TestSDLivingStackAddsPRAfterFrontMerged(t *testing.T) {
 	t.Parallel()
 	repoDir := newTestRepo(t)
 	makeCommits(t, repoDir, "livingstack", "LivingStack Commit", 2)
-	runGitSD(t, repoDir, "track")
 	runGitSD(t, repoDir, "assign", "livingstack:0-1")
 	runGitSD(t, repoDir, "sync", "livingstack")
 
@@ -1888,7 +1874,6 @@ func TestSDLivingStackAddsPRAfterFrontMerged(t *testing.T) {
 	runGit(t, repoDir, "add", filename)
 	runGit(t, repoDir, "commit", "-m", "LivingStack Commit 3")
 
-	runGitSD(t, repoDir, "track")
 	out = runGitSD(t, repoDir, "status")
 	var newIdx string
 	for line := range strings.SplitSeq(out, "\n") {

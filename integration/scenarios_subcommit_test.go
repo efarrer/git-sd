@@ -53,7 +53,6 @@ func TestSDSubCommitFoldsIntoParentPRNotItsOwn(t *testing.T) {
 	}
 	runGit(t, repoDir, "add", "subfix-bug.txt")
 	runGit(t, repoDir, "commit", "-m", "Subfix Bugfix")
-	runGitSD(t, repoDir, "track") // assign an id, populate indices
 	runGitSD(t, repoDir, "move", "2:0.1")
 	out = runGitSD(t, repoDir, "status")
 	// The bug-fix row must show sub-index 0.1 and belong to subfix.
@@ -183,7 +182,6 @@ func TestSDPartialMergeOfSubCommitPRLeavesDownstreamClean(t *testing.T) {
 	}
 	runGit(t, repoDir, "add", "pm3-bug.txt")
 	runGit(t, repoDir, "commit", "-m", "PM3 Bugfix")
-	runGitSD(t, repoDir, "track")
 	runGitSD(t, repoDir, "move", "2:0.1") // bug-fix as sub-commit of "PM3 Commit 1" (index 0)
 	runGitSD(t, repoDir, "sync")
 
@@ -293,8 +291,8 @@ func TestSDFixupAttachesHeadToExistingPR(t *testing.T) {
 }
 
 // TestSDFixupAutoTracksUntrackedHead verifies fixup self-tracks HEAD (the
-// same way move/assign do) when it has no git-sd-id yet -- no separate
-// 'git sd track' step is required before fixing up a fresh commit.
+// same way move/assign do) when it has no git-sd-id yet -- no
+// separate tagging step is needed before fixing up a fresh commit.
 func TestSDFixupAutoTracksUntrackedHead(t *testing.T) {
 	t.Parallel()
 	repoDir := newTestRepo(t)
@@ -302,7 +300,7 @@ func TestSDFixupAutoTracksUntrackedHead(t *testing.T) {
 	runGitSD(t, repoDir, "assign", "fixupauto:0")
 	runGitSD(t, repoDir, "sync")
 
-	// The fix commit is created without any 'track'/'status' call touching
+	// The fix commit is created without any status or assign call touching
 	// it, so it has no git-sd-id when 'fixup' runs.
 	filename := filepath.Join(repoDir, "fixupauto-fix.txt")
 	if err := os.WriteFile(filename, fmt.Appendf(nil, "fix %d", os.Getpid()), 0644); err != nil {
@@ -329,7 +327,7 @@ func TestSDFixupAutoTracksUntrackedHead(t *testing.T) {
 	if !strings.Contains(fixLine, "0.1") || !strings.Contains(fixLine, "fixupauto") {
 		t.Fatalf("expected the auto-tracked commit to show as sub-commit 0.1 under fixupauto, got line: %s", fixLine)
 	}
-	fmt.Println("fixup verified: auto-tracks an untracked HEAD commit, no separate 'track' step needed.")
+	fmt.Println("fixup verified: auto-tracks an untracked HEAD commit, no separate tagging step needed.")
 }
 
 // TestSDFixupComputesNextSubIndexWhenParentAlreadyHasOne verifies the
@@ -376,7 +374,7 @@ func TestSDFixupRejectsUnassignedTarget(t *testing.T) {
 	t.Parallel()
 	repoDir := newTestRepo(t)
 	makeCommits(t, repoDir, "fixupnoset", "FixupNoSet Commit", 2)
-	runGitSD(t, repoDir, "track")
+	makeReady(t, repoDir)
 
 	headBefore := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
 	out, err := runGitSDErr(repoDir, "fixup", "0")
@@ -499,7 +497,7 @@ func TestSDMoveRejectsThreeLevelNesting(t *testing.T) {
 	}
 	runGit(t, repoDir, "add", filename2)
 	runGit(t, repoDir, "commit", "-m", "Nest3 SubSub")
-	runGitSD(t, repoDir, "track")
+	makeReady(t, repoDir)
 
 	headBefore := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
 	// Index 1 is now the sub-commit "0.1" itself -- attaching under it must

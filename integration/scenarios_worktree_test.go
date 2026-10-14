@@ -77,7 +77,6 @@ func runWorktreeChecks(t *testing.T, repoDir, wtDir string) {
 		}
 		return ""
 	}
-	runGitSD(t, wtDir, "track") // assigns git-sd-ids
 	out := runGitSD(t, wtDir, "status")
 	srcIdx := idxOf(out, "WT Move B")
 	if srcIdx == "" {

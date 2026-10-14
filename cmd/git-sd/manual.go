@@ -39,10 +39,11 @@ DESCRIPTION
        --abort to restore the original order. A conflict during rebase behaves
        the same way.
 
-       A commit's identity trailer (git-sd-id) is added by track, or implicitly
-       by assign and move (both track any untracked commits in range before
-       acting).  status never mutates commits -- a commit with no id yet shows
-       Status '--' (Untracked).
+       A commit's identity trailer (git-sd-id) is added by assign, move and
+       fixup, each of which tags every untracked commit in range before acting
+       (there is no separate command for it).  status never mutates commits --
+       a commit with no id yet shows Status '--' (Untracked) -- and sync,
+       merge, rebase and watch skip such a commit.
 
        Commit states, in order: Untracked (--) -> Ready (blank Status, has an
        id, no Stack Set) -> Assigned ([], has a Stack Set, no PR yet) -> has a
@@ -55,12 +56,6 @@ DESCRIPTION
        status --legend to see the exact symbol for each).
 
 COMMANDS
-       track  Assigns a git-sd-id trailer to every commit since the base branch
-              that doesn't already have one. Idempotent. Not required before
-              assign or move, which both self-track; useful on its own to move
-              commits from Untracked to Ready in status without performing any
-              other action.
-
        status [--legend] [--no-legend]
               Lists every commit since the base branch: Icon (the state's emoji,
               blank header), Status (the state's word), Index, Stack Set, git-

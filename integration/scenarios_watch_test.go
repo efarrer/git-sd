@@ -28,9 +28,6 @@ func TestSDWatchReportsChangesAndSurvivesAnOutage(t *testing.T) {
 	}
 	// A sub-commit on the first PR, so the table has a row that has no PR of its own.
 	e.commitFile("Fix_A.txt", "Fix for A")
-	if o, err := e.sd("track"); err != nil {
-		t.Fatalf("track: %v\n%s", err, o)
-	}
 	if o, err := e.sd("fixup", "0"); err != nil {
 		t.Fatalf("fixup: %v\n%s", err, o)
 	}

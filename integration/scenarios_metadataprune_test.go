@@ -40,9 +40,7 @@ func TestSDMetadataKeepsNoEntriesForReadyCommits(t *testing.T) {
 	for _, c := range []string{"Commit A", "Commit B", "Commit C"} {
 		e.commitFile(strings.ReplaceAll(c, " ", "_")+".txt", c)
 	}
-	if o, err := e.sd("track"); err != nil {
-		t.Fatalf("track: %v\n%s", err, o)
-	}
+	e.makeReady(t)
 	if o, err := e.sd("status"); err != nil {
 		t.Fatalf("status: %v\n%s", err, o)
 	}

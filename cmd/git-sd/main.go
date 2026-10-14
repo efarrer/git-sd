@@ -16,11 +16,11 @@ func main() {
 
 	command := os.Args[1]
 	switch command {
-	case "track", "assign", "move", "fixup", "sync", "merge", "rebase":
+	case "assign", "move", "fixup", "sync", "merge", "rebase":
 		ringBy = command
 	}
 	switch command {
-	case "track", "status", "assign", "sync", "move", "fixup", "merge", "rebase":
+	case "status", "assign", "sync", "move", "fixup", "merge", "rebase":
 		if reconcilePending() {
 			if command != "status" {
 				fmt.Printf("Error: %s\n", pendingInProgressMsg)
@@ -30,8 +30,6 @@ func main() {
 		}
 	}
 	switch command {
-	case "track":
-		runTrack(os.Args[2:])
 	case "status":
 		runStatus(os.Args[2:])
 	case "assign":
@@ -70,7 +68,6 @@ func usageText() string {
 	return `usage: git sd <command> [<args>]
 
 Commands:
-  track       Add git-sd-id trailers to untracked commits
   status      List commits and their Stack Set/PR status
                 Options: --legend, --no-legend
   assign      Assign commits to a Stack Set

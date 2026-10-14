@@ -132,3 +132,14 @@ func TestSDHelpPrintsTheManual(t *testing.T) {
 		t.Errorf("the manual must stand on its own")
 	}
 }
+
+// `git sd track` was removed: assign, move and fixup tag commits themselves.
+func TestSDTrackIsGone(t *testing.T) {
+	t.Parallel()
+	cmd := exec.Command(gitSDPath, "track")
+	cmd.Dir = t.TempDir()
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "Unknown command: track") {
+		t.Errorf("track is an unknown command: %v\n%s", err, out)
+	}
+}

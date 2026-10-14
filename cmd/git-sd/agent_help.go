@@ -45,13 +45,15 @@ GLOBAL CONVENTIONS
     missing, the error is "'gh' CLI not found. Please install it to use
     git-sd."; when it is not logged in or its token is invalid or expired,
     "You are not authenticated with 'gh'. Please run 'gh auth login'.".
-    There is no startup check: track, assign, move, fixup and help work
+    There is no startup check: assign, move, fixup and help work
     without gh, and 'status' with PRs to look up but no usable gh prints
     its table plus one "Warning: PR states unavailable: ..." and exits 0.
-  - A commit's identity trailer (git-sd-id) is added by 'track', or
-    implicitly by 'assign' and 'move' (both track any untracked commits in
-    range before acting). 'status' never mutates commits — a commit with no
-    id yet shows Status '—' (Untracked).
+  - A commit's identity trailer (git-sd-id) is added by 'assign', 'move'
+    and 'fixup', each of which tags EVERY untracked commit in range before
+    acting (there is no separate command for it). 'status', 'sync',
+    'merge', 'rebase' and 'watch' never tag: 'status' never mutates
+    commits — a commit with no id yet shows Status '—' (Untracked) — and
+    the others skip it.
   - Commit states, in order: Untracked ('—') -> Ready (blank Status, has an
     id, no Stack Set) -> Assigned ('📦', has a Stack Set, no PR yet) ->
     has-a-PR (one of the PR-state emoji below) -> Merged.
@@ -67,17 +69,6 @@ GLOBAL CONVENTIONS
     indices are relative to the merge-base with this branch.
 
 COMMANDS
-
-track
-  Usage:       git sd track
-  Arguments:   none (any given are ignored)
-  Behavior:    Assigns a git-sd-id trailer to every commit since the base
-               branch that doesn't already have one. Idempotent — a second
-               run with no new commits is a no-op.
-  Output:      "Commits tracked."
-  Use when:    You want commits to show as Ready in 'status' without
-               performing any other action. Not required before 'assign' or
-               'move' — both self-track.
 
 status
   Usage:       git sd status [--legend] [--no-legend]
@@ -393,7 +384,7 @@ watch
                started <time>)" and the lock file's path
                (.git/sd/watch.pid), which can be removed if that watch is gone.
   Other commands: While a watch runs in the same repository, status and
-               track/assign/move/fixup/sync/merge/rebase ask it to check
+               assign/move/fixup/sync/merge/rebase ask it to check
                now (they touch .git/sd/watch.pid): it polls at once and
                keeps its schedule (the wait only restarts from the
                minimum if the check finds a change). It still announces

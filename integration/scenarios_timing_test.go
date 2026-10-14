@@ -48,7 +48,6 @@ func TestSDStatusTiming(t *testing.T) {
 	runGitSD(t, repoDir, "sync", "tma")
 	runGitSD(t, repoDir, "sync", "tmb")
 	makeCommits(t, repoDir, "tmf", "Timing Fix", 1)
-	runGitSD(t, repoDir, "track")
 	runGitSD(t, repoDir, "fixup", "0")
 	makeCommits(t, repoDir, "tmu", "Timing Untracked", 3)
 

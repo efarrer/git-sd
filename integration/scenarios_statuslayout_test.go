@@ -55,9 +55,7 @@ func TestSDStatusShowsStateWordsAndHonoursColumns(t *testing.T) {
 	}
 
 	// Tracked but not assigned: Ready, with no icon.
-	if o, err := e.sd("track"); err != nil {
-		t.Fatalf("track: %v\n%s", err, o)
-	}
+	e.makeReady(t)
 	out = status()
 	if got, icon := statusOf(out, "Commit A"), iconOf(out, "Commit A"); got != "Ready" || icon != "" {
 		t.Errorf("a tracked, unassigned commit should be Ready with no icon, got %q / %q:\n%s", got, icon, out)
@@ -82,9 +80,6 @@ func TestSDStatusShowsStateWordsAndHonoursColumns(t *testing.T) {
 		t.Fatalf("sync: %v\n%s", err, o)
 	}
 	e.commitFile("Fix_A.txt", "Fix for A")
-	if o, err := e.sd("track"); err != nil {
-		t.Fatalf("track: %v\n%s", err, o)
-	}
 	if o, err := e.sd("fixup", "0"); err != nil {
 		t.Fatalf("fixup: %v\n%s", err, o)
 	}
