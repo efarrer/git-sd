@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"git-sd/internal/timing"
+	"github.com/efarrer/git-sd/internal/timing"
 	"os"
 )
 

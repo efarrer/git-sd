@@ -9,14 +9,23 @@
 - **Git:** Any version works. Git >= 2.38 is used when available (real content-based rename detection for stack-set-assignment validation); older git falls back to an equivalent plumbing-based check with a minor rename-detection fidelity gap — see DEVELOPMENT.md's "Git Version Compatibility."
 
 ### Installation
+With Go (1.26.2 or newer):
+```bash
+go install github.com/efarrer/git-sd/cmd/git-sd@latest
+```
+This puts `git-sd` in `$(go env GOBIN)` (by default `~/go/bin`; make sure that
+directory is on your `PATH`), and git then runs it as `git sd`. `git sd -h` and
+`git sd --agent` work straight away, since the binary prints them itself;
+`git sd --help` opens the man page, which this method does not install.
+
+From a checkout, to install the binary and the man page too:
 ```bash
 make install
 # Installs the binary and man page under /usr/local by default.
 # Override the location with: make install PREFIX=~/.local
 ```
-This also makes `git sd --help` work (it opens the installed man page, same
-as `git commit --help`); `git sd -h` and `git sd --agent` work either way,
-without installing anything, since they're printed directly by the binary.
+With the man page installed, `git sd --help` works (it opens the man page, same
+as `git commit --help`).
 
 ### Basic Workflow
 1. **Track:** Run `git sd track` to add `git-sd-id` trailers to new commits (or just run `git sd status` first — it's read-only and shows which commits still need tracking).

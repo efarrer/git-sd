@@ -3,11 +3,11 @@ package main
 import (
 	"errors"
 	"fmt"
-	"git-sd/internal/git"
-	"git-sd/internal/github"
-	"git-sd/internal/metadata"
-	"git-sd/internal/timing"
-	"git-sd/internal/ui"
+	"github.com/efarrer/git-sd/internal/git"
+	"github.com/efarrer/git-sd/internal/github"
+	"github.com/efarrer/git-sd/internal/metadata"
+	"github.com/efarrer/git-sd/internal/timing"
+	"github.com/efarrer/git-sd/internal/ui"
 	"os"
 	"strings"
 )

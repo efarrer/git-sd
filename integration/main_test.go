@@ -62,7 +62,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	gitSDPath = filepath.Join(binDir, "git-sd")
-	if out, err := exec.Command("go", "build", "-o", gitSDPath, "git-sd/cmd/git-sd").CombinedOutput(); err != nil {
+	if out, err := exec.Command("go", "build", "-o", gitSDPath, "github.com/efarrer/git-sd/cmd/git-sd").CombinedOutput(); err != nil {
 		fmt.Printf("Error building git-sd binary: %v\n%s\n", err, string(out))
 		os.RemoveAll(binDir)
 		os.Exit(1)

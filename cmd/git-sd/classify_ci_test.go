@@ -3,8 +3,8 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"git-sd/internal/github"
-	"git-sd/internal/ui"
+	"github.com/efarrer/git-sd/internal/github"
+	"github.com/efarrer/git-sd/internal/ui"
 	"testing"
 )
 

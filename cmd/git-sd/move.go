@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	"git-sd/internal/git"
-	"git-sd/internal/metadata"
+	"github.com/efarrer/git-sd/internal/git"
+	"github.com/efarrer/git-sd/internal/metadata"
 	"strings"
 )
 

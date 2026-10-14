@@ -2,7 +2,7 @@ package main
 
 import (
 	"encoding/json"
-	"git-sd/internal/ui"
+	"github.com/efarrer/git-sd/internal/ui"
 	"os"
 	"os/exec"
 	"path/filepath"

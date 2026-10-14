@@ -1,9 +1,9 @@
 package main
 
 import (
-	"git-sd/internal/git"
-	"git-sd/internal/metadata"
-	"git-sd/internal/ui"
+	"github.com/efarrer/git-sd/internal/git"
+	"github.com/efarrer/git-sd/internal/metadata"
+	"github.com/efarrer/git-sd/internal/ui"
 	"slices"
 	"strings"
 	"testing"

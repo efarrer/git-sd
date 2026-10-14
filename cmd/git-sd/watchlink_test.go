@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"git-sd/internal/ui"
+	"github.com/efarrer/git-sd/internal/ui"
 	"os"
 	"path/filepath"
 	"strings"

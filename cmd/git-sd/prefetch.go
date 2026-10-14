@@ -1,7 +1,7 @@
 package main
 
 import (
-	"git-sd/internal/github"
+	"github.com/efarrer/git-sd/internal/github"
 	"strconv"
 	"sync"
 )

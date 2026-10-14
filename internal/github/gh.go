@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"git-sd/internal/timing"
+	"github.com/efarrer/git-sd/internal/timing"
 	"os/exec"
 	"strings"
 	"sync"
 	"sync/atomic"
 
-	"git-sd/internal/git"
+	"github.com/efarrer/git-sd/internal/git"
 )
 
 // EnvError is a problem with the user's GitHub CLI setup (not installed, not

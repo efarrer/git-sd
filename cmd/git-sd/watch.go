@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"git-sd/internal/git"
-	"git-sd/internal/github"
-	"git-sd/internal/ui"
+	"github.com/efarrer/git-sd/internal/git"
+	"github.com/efarrer/git-sd/internal/github"
+	"github.com/efarrer/git-sd/internal/ui"
 	"io"
 	"os"
 	"os/exec"

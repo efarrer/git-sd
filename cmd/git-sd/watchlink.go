@@ -3,7 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"git-sd/internal/metadata"
+	"github.com/efarrer/git-sd/internal/metadata"
 	"os"
 	"path/filepath"
 	"time"

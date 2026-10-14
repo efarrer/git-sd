@@ -7,8 +7,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"git-sd/internal/git"
-	"git-sd/internal/ui"
+	"github.com/efarrer/git-sd/internal/git"
+	"github.com/efarrer/git-sd/internal/ui"
 )
 
 // notifyVariable is one environment variable sd.watch.notify-command receives.

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"git-sd/internal/ui"
+	"github.com/efarrer/git-sd/internal/ui"
 	"os"
 	"slices"
 	"strings"

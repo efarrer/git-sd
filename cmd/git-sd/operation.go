@@ -3,9 +3,9 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"git-sd/internal/metadata"
-	"git-sd/internal/timing"
-	"git-sd/internal/ui"
+	"github.com/efarrer/git-sd/internal/metadata"
+	"github.com/efarrer/git-sd/internal/timing"
+	"github.com/efarrer/git-sd/internal/ui"
 	"os"
 	"path/filepath"
 	"syscall"
